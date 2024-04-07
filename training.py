@@ -85,8 +85,8 @@ def train_and_test(train_loader, test_loader, params, opt_state):
         print(f"Average epoch loss: {total_loss / len(train_loader)}")
         
         # save pickle
-        with open(f"params.pkl", "wb") as f:
-            pickle.dump(params, f)
+        # with open(f"params.pkl", "wb") as f:
+        #     pickle.dump(params, f)
         
         if (epoch) % 1 == 0:
             test_and_save(test_loader, params, epoch)

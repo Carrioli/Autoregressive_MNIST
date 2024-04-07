@@ -49,30 +49,34 @@ def single_head_self_attention(x: Array,
                                mask: Array) -> Array:
     wq, e, wk, f, wv = params
     
-    # shrink
+    # constants
     seq_len, d_model = x.shape
     shrink_factor = e.shape[-1]
+    d_qk = wq.shape[-1]
+    dv   = wv.shape[-1]
+
+    # for inference
+    e = e[:seq_len // shrink_factor]
+    f = f[:seq_len // shrink_factor]
+
+    # shrink
     x = x.reshape(-1, shrink_factor, d_model)
-    e = e[:x.shape[0]]
     x = jnp.matmul(e, x)
     x = jnp.squeeze(x, axis=1)
     
-    # attention
     Q = x @ wq
     K = x @ wk
-    V = x @ wv
-    d_qk = Q.shape[-1]
-    scores = jnp.dot(Q, K.T) / jnp.sqrt(d_qk)
+    scores = Q @ K.T / jnp.sqrt(d_qk)
     scores += mask
     attention_weights = nn.softmax(scores, axis=-1)
+    V = x @ wv
     out = attention_weights @ V
     
     # expand
     out = jnp.expand_dims(out, axis=1)
-    f   = f[:out.shape[0]]
     out = jnp.matmul(f, out)
-    out = out.reshape(seq_len, -1)
-    
+    out = out.reshape(-1, dv)
+
     return out
 
 
@@ -83,11 +87,11 @@ def transformer_block(x: Array,
     attention = vmap(single_head_self_attention, in_axes=(None, 0, None))(x, params, mask)
     attention = concat_heads(attention)
     attention = jnp.dot(attention, projection)
-    x += attention
-    mean = jnp.mean(x, axis=-1, keepdims=True)
-    var = jnp.var(x, axis=-1, keepdims=True)
-    x = (x - mean) / jnp.sqrt(var + 1e-5)
-    return x
+    attention += x
+    mean = jnp.mean(attention, axis=-1, keepdims=True)
+    var = jnp.var(attention, axis=-1, keepdims=True)
+    attention = (attention - mean) / jnp.sqrt(var + 1e-5)
+    return attention
 
 
 def transformer(x: Array,
