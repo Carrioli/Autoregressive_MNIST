@@ -4,3 +4,4 @@ data
 saved_images
 __pycache__
 params.pkl
+.DS_Store
