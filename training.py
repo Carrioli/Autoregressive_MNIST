@@ -44,14 +44,9 @@ def loss_fn(params, x, y):
 @jit
 def train_step(params, opt_state, x, y):
     loss, grads = value_and_grad(loss_fn)(params, x, y)
-    updates, opt_state = optimizer.update(grads, opt_state, params=params)
+    updates, opt_state = optimizer.update(grads, opt_state, params = params)
     params = optax.apply_updates(params, updates)    
     return loss, params, opt_state
-
-
-def predict(x, params, mask):
-    out = batched_forward(x, params, n_outer_blocks, n_blocks, mask)
-    return jnp.argmax(out, axis=-1)
 
 
 @jit
@@ -79,8 +74,8 @@ def train_and_test(train_loader, test_loader, params, opt_state):
         total_loss = 0 
         print('Epoch: ' + str(epoch + 1))
         for batch in tqdm(train_loader):
-            batch = batch[0]
-            x, y = jnp.array(batch[:, :-shrink_factor]), jnp.array(batch[:, shrink_factor:])
+            batch = jnp.array(batch[0])
+            x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
             loss, params, opt_state = train_step(params, opt_state, x, y)
             total_loss += loss
         print(f"Average epoch loss: {total_loss / len(train_loader)}")
