@@ -59,7 +59,7 @@ def test_a_batch(batch, params):
     batch = batch[:, :original_n_unmasked]
 
     while batch.shape[-1] != (seq_len + shrink_factor):
-        out = batched_forward(batch, params, n_outer_blocks, n_blocks, mask = jnp.zeros(batch.shape[-1] // shrink_factor))
+        out = batched_forward(batch, params, n_outer_blocks, n_blocks, mask = 0)
         out = jnp.argmax(out, axis=-1)
         out = out[:, -shrink_factor:]
         batch = jnp.concatenate([batch, out], axis=-1)
@@ -69,8 +69,9 @@ def test_a_batch(batch, params):
 
 def test_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
-    batch = test_a_batch(batch, params)
-    save_batch_images(batch, batch_index=0, epoch_index=epoch)
+    predicted_batch = test_a_batch(batch, params)
+    print("Average test L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
+    save_batch_images(predicted_batch, batch_index=0, epoch_index=epoch)
 
 
 def train_and_test(train_loader, test_loader, params, opt_state):
