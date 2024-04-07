@@ -4,7 +4,7 @@ import pickle
 import jax.numpy as jnp
 import numpy as np
 import optax
-from jax import devices, jit, nn, random, value_and_grad, config
+from jax import devices, jit, nn, random, value_and_grad, config, vmap
 from jax.tree_util import tree_flatten
 from PIL import Image
 from tqdm import tqdm
@@ -30,6 +30,14 @@ def save_batch_images(batch, batch_index, epoch_index, save_dir='saved_images'):
         img_pil.save(os.path.join(save_dir, f'epoch_{epoch_index}_batch_{batch_index}_image_{i}.png'))
 
 
+def inverse_transform(matrix, original_shape, patch_shape):
+    patches_per_dim = original_shape[0] // patch_shape[0], original_shape[1] // patch_shape[1]
+    reshaped_matrix = matrix.reshape(patches_per_dim[0], patches_per_dim[1], patch_shape[0], patch_shape[1])
+    transposed_matrix = reshaped_matrix.transpose(0, 2, 1, 3)
+    original_matrix = transposed_matrix.reshape(original_shape)
+    return original_matrix
+
+
 def count_params(params):
     params_flat, _ = tree_flatten(params)
     num_params = sum([p.size for p in params_flat])
@@ -44,14 +52,9 @@ def loss_fn(params, x, y):
 @jit
 def train_step(params, opt_state, x, y):
     loss, grads = value_and_grad(loss_fn)(params, x, y)
-    updates, opt_state = optimizer.update(grads, opt_state, params=params)
+    updates, opt_state = optimizer.update(grads, opt_state, params = params)
     params = optax.apply_updates(params, updates)    
     return loss, params, opt_state
-
-
-def predict(x, params, mask):
-    out = batched_forward(x, params, n_outer_blocks, n_blocks, mask)
-    return jnp.argmax(out, axis=-1)
 
 
 @jit
@@ -59,18 +62,21 @@ def test_a_batch(batch, params):
     batch = batch[:, :original_n_unmasked]
 
     while batch.shape[-1] != (seq_len + shrink_factor):
-        out = batched_forward(batch, params, n_outer_blocks, n_blocks, mask = jnp.zeros(batch.shape[-1] // shrink_factor))
+        out = batched_forward(batch, params, n_outer_blocks, n_blocks, mask = 0)
         out = jnp.argmax(out, axis=-1)
         out = out[:, -shrink_factor:]
         batch = jnp.concatenate([batch, out], axis=-1)
 
+    batch = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     return batch
 
 
 def test_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
-    batch = test_a_batch(batch, params)
-    save_batch_images(batch, batch_index=0, epoch_index=epoch)
+    predicted_batch = test_a_batch(batch, params)
+    batch = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
+    print("Average test L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
+    save_batch_images(predicted_batch, batch_index=0, epoch_index=epoch)
 
 
 def train_and_test(train_loader, test_loader, params, opt_state):
@@ -78,11 +84,11 @@ def train_and_test(train_loader, test_loader, params, opt_state):
         total_loss = 0 
         print('Epoch: ' + str(epoch + 1))
         for batch in tqdm(train_loader):
-            batch = batch[0]
-            x, y = jnp.array(batch[:, :-shrink_factor]), jnp.array(batch[:, shrink_factor:])
+            batch = jnp.array(batch[0])
+            x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
             loss, params, opt_state = train_step(params, opt_state, x, y)
             total_loss += loss
-        print(f"Average epoch loss: {total_loss / len(train_loader)}")
+        print(f"Average train epoch loss: {total_loss / len(train_loader)}")
         
         # save pickle
         # with open(f"params.pkl", "wb") as f:
@@ -100,7 +106,8 @@ num_classes    = 256 # same as d_out
 d_model        = 64 # same as feature size
 d_qk           = 8
 d_v            = 8
-shrink_factor  = 28
+patch_shape    = (4, 4)
+shrink_factor  = patch_shape[0] * patch_shape[1]
 seq_len        = 784 - shrink_factor
 original_n_unmasked = 448
 
@@ -125,7 +132,7 @@ opt_state = optimizer.init(params)
 mask = create_attention_mask(seq_len // shrink_factor, original_n_unmasked // shrink_factor)
 
 batch_size = 128
-train_loader, test_loader = create_mnist_dataset(bsz=batch_size)
+train_loader, test_loader = create_mnist_dataset(bsz=batch_size, patch_shape=patch_shape)
 
 count_params(params)
 print("Available devices:", devices())
