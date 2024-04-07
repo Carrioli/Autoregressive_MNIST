@@ -1,0 +1,13 @@
+jax
+jaxlib
+jaxtyping
+# jax-metal
+equinox
+torch
+torchvision
+optax
+tqdm
+# tensorflow
+# tensorflow-datasets
+Pillow
+ml-collections
