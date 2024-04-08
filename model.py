@@ -9,8 +9,8 @@ from jaxtyping import Array
 def create_attention_mask(size: int, n_unmasked: int) -> Array:
     assert n_unmasked <= size, "Unmasked elements must be less than or equal to the sequence length"
     mask = jnp.triu(jnp.full((size, size), fill_value=-jnp.inf), k=1)
-    return mask
-    # return mask.at[:, :n_unmasked].set(0)
+    # return mask
+    return mask.at[:, :n_unmasked].set(0)
 
 
 def init_params(initializer: Callable,
