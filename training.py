@@ -98,10 +98,10 @@ def train_and_test(train_loader, test_loader, params, opt_state):
             test_and_save(test_loader, params, epoch)
 
 
-n_outer_blocks = 4
-n_transformers = 5
-n_blocks       = 6
-n_heads        = 6
+n_outer_blocks = 1
+n_transformers = 12
+n_blocks       = 4
+n_heads        = 10
 num_classes    = 256 # same as d_out
 d_model        = 64 # same as feature size
 d_qk           = 8
