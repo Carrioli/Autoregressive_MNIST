@@ -57,23 +57,34 @@ def train_step(params, opt_state, x, y):
     return loss, params, opt_state
 
 
+def nll(probabilities, labels):
+    return jnp.mean(-jnp.log(probabilities[jnp.arange(labels.size), labels] + 1e-9))
+
+
 @jit
 def test_a_batch(batch, params):
-    batch = batch[:, :original_n_unmasked]
+    prediction = batch[:, :original_n_unmasked]
+    
+    out_probabilities = jnp.empty((128, 0, 256)) 
 
-    while batch.shape[-1] != (seq_len + shrink_factor):
-        out = batched_forward(batch, params, n_outer_blocks, n_blocks, mask = 0)
+    while prediction.shape[-1] != (seq_len + shrink_factor):
+        out = batched_forward(prediction, params, n_outer_blocks, n_blocks, mask = 0)
+        out = out[:, -shrink_factor:, :]
+        out_probabilities = jnp.concatenate([out_probabilities, nn.softmax(out, axis=-1)], axis=1)
         out = jnp.argmax(out, axis=-1)
-        out = out[:, -shrink_factor:]
-        batch = jnp.concatenate([batch, out], axis=-1)
+        prediction = jnp.concatenate([prediction, out], axis=-1)
 
-    batch = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
-    return batch
+    labels = batch[:, original_n_unmasked:]
+    out_probabilities = out_probabilities.reshape(-1, out_probabilities.shape[-1])
+    average_batch_nll = nll(out_probabilities, labels.flatten())
+    prediction = vmap(inverse_transform, in_axes=(0, None, None))(prediction, (28, 28), patch_shape)
+    return prediction, average_batch_nll
 
 
 def test_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
-    predicted_batch = test_a_batch(batch, params)
+    predicted_batch, average_batch_nll = test_a_batch(batch, params)
+    print("Average test NLL over batch:", average_batch_nll)
     batch = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     print("Average test L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
     save_batch_images(predicted_batch, batch_index=0, epoch_index=epoch)
@@ -81,14 +92,14 @@ def test_and_save(test_loader, params, epoch):
 
 def train_and_test(train_loader, test_loader, params, opt_state):
     for epoch in range(66):
-        total_loss = 0 
-        print('Epoch: ' + str(epoch + 1))
-        for batch in tqdm(train_loader):
-            batch = jnp.array(batch[0])
-            x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-            loss, params, opt_state = train_step(params, opt_state, x, y)
-            total_loss += loss
-        print(f"Average train epoch loss: {total_loss / len(train_loader)}")
+        # total_loss = 0 
+        # print('Epoch: ' + str(epoch + 1))
+        # for batch in tqdm(train_loader):
+        #     batch = jnp.array(batch[0])
+        #     x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+        #     loss, params, opt_state = train_step(params, opt_state, x, y)
+        #     total_loss += loss
+        # print(f"Average train epoch loss: {total_loss / len(train_loader)}")
         
         # save pickle
         # with open(f"params.pkl", "wb") as f:
@@ -98,10 +109,10 @@ def train_and_test(train_loader, test_loader, params, opt_state):
             test_and_save(test_loader, params, epoch)
 
 
-n_outer_blocks = 1
-n_transformers = 12
+n_outer_blocks = 2
+n_transformers = 2
 n_blocks       = 4
-n_heads        = 10
+n_heads        = 2
 num_classes    = 256 # same as d_out
 d_model        = 64 # same as feature size
 d_qk           = 8
