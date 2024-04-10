@@ -127,9 +127,9 @@ def train_and_test(train_loader, test_loader, params, opt_state):
 
 
 n_outer_blocks = 1
-n_transformers = 12
+n_transformers = 16
 n_blocks       = 4
-n_heads        = 10
+n_heads        = 12
 num_classes    = 256 # same as d_out
 d_model        = 64 # same as feature size
 d_qk           = 8
