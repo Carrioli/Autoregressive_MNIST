@@ -74,36 +74,38 @@ def train_step(params, opt_state, x, y):
     return loss, params, opt_state
 
 
-def nll(probabilities, labels):
-    return jnp.mean(-jnp.log(probabilities[jnp.arange(labels.size), labels] + 1e-9))
+def cross_entropy_loss(logits, labels):
+    labels_one_hot = nn.one_hot(labels, num_classes)
+    return -jnp.sum(labels_one_hot * logits)
 
 
 @jit
 def test_a_batch(batch, params):
     prediction = batch[:, :original_n_unmasked]
     
-    out_probabilities = jnp.empty((128, 0, 256)) 
+    logits = jnp.empty((batch_size, 0, num_classes)) 
 
     while prediction.shape[-1] != (seq_len + shrink_factor):
-        out = batched_forward(prediction, params, n_outer_blocks, n_blocks, mask = 0)
+        out = batched_forward(prediction, params, n_outer_blocks, n_blocks, mask=0)
         out = out[:, -shrink_factor:, :]
-        out_probabilities = jnp.concatenate([out_probabilities, nn.softmax(out, axis=-1)], axis=1)
+        logits = jnp.concatenate([logits, out], axis=1)
         out = jnp.argmax(out, axis=-1)
         prediction = jnp.concatenate([prediction, out], axis=-1)
 
     labels = batch[:, original_n_unmasked:]
-    out_probabilities = out_probabilities.reshape(-1, out_probabilities.shape[-1])
-    average_batch_nll = nll(out_probabilities, labels.flatten())
-    return prediction, average_batch_nll
+    average_batch_nll = jnp.mean(cross_entropy_loss(logits, labels))
+    average_softmax_cross_entropy = jnp.mean(optax.softmax_cross_entropy_with_integer_labels(logits, labels))
+    return prediction, average_batch_nll, average_softmax_cross_entropy
 
 
 def test_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
-    predicted_batch, average_batch_nll = test_a_batch(batch, params)
-    predicted_batch = vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
-    batch           = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
+    predicted_batch, average_batch_nll, average_softmax_cross_entropy = test_a_batch(batch, params)
     print("Average test NLL over batch:", average_batch_nll)
     print("Average test L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
+    print("Average test softmax cross entropy:", average_softmax_cross_entropy)
+    predicted_batch = vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
+    batch           = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     save_batch(batch, predicted_batch, epoch_index=epoch)
 
 
@@ -111,12 +113,12 @@ def train_and_test(train_loader, test_loader, params, opt_state):
     for epoch in range(66):
         total_loss = 0 
         print('Epoch: ' + str(epoch + 1))
-        for batch in tqdm(train_loader):
-            batch = jnp.array(batch[0])
-            x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-            loss, params, opt_state = train_step(params, opt_state, x, y)
-            total_loss += loss
-        print(f"Average train epoch loss: {total_loss / len(train_loader)}")
+        # for batch in tqdm(train_loader):
+        #     batch = jnp.array(batch[0])
+        #     x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+        #     loss, params, opt_state = train_step(params, opt_state, x, y)
+        #     total_loss += loss
+        # print(f"Average train epoch loss: {total_loss / len(train_loader)}")
         
         # save pickle
         # with open(f"params.pkl", "wb") as f:
@@ -127,9 +129,9 @@ def train_and_test(train_loader, test_loader, params, opt_state):
 
 
 n_outer_blocks = 1
-n_transformers = 16
+n_transformers = 1
 n_blocks       = 4
-n_heads        = 12
+n_heads        = 2
 num_classes    = 256 # same as d_out
 d_model        = 64 # same as feature size
 d_qk           = 8
