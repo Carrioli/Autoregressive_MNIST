@@ -113,12 +113,12 @@ def train_and_test(train_loader, test_loader, params, opt_state):
     for epoch in range(66):
         total_loss = 0 
         print('Epoch: ' + str(epoch + 1))
-        # for batch in tqdm(train_loader):
-        #     batch = jnp.array(batch[0])
-        #     x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-        #     loss, params, opt_state = train_step(params, opt_state, x, y)
-        #     total_loss += loss
-        # print(f"Average train epoch loss: {total_loss / len(train_loader)}")
+        for batch in tqdm(train_loader):
+            batch = jnp.array(batch[0])
+            x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+            loss, params, opt_state = train_step(params, opt_state, x, y)
+            total_loss += loss
+        print(f"Average train epoch loss: {total_loss / len(train_loader)}")
         
         # save pickle
         # with open(f"params.pkl", "wb") as f:
@@ -129,9 +129,9 @@ def train_and_test(train_loader, test_loader, params, opt_state):
 
 
 n_outer_blocks = 1
-n_transformers = 1
+n_transformers = 16
 n_blocks       = 4
-n_heads        = 2
+n_heads        = 12
 num_classes    = 256 # same as d_out
 d_model        = 64 # same as feature size
 d_qk           = 8
