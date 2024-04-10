@@ -7,7 +7,6 @@ import numpy as np
 import optax
 from jax import config, devices, jit, nn, random, value_and_grad, vmap
 from jax.tree_util import tree_flatten
-from PIL import Image
 from tqdm import tqdm
 
 from data import create_mnist_dataset
@@ -110,14 +109,14 @@ def test_and_save(test_loader, params, epoch):
 
 def train_and_test(train_loader, test_loader, params, opt_state):
     for epoch in range(66):
-        # total_loss = 0 
-        # print('Epoch: ' + str(epoch + 1))
-        # for batch in tqdm(train_loader):
-        #     batch = jnp.array(batch[0])
-        #     x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-        #     loss, params, opt_state = train_step(params, opt_state, x, y)
-        #     total_loss += loss
-        # print(f"Average train epoch loss: {total_loss / len(train_loader)}")
+        total_loss = 0 
+        print('Epoch: ' + str(epoch + 1))
+        for batch in tqdm(train_loader):
+            batch = jnp.array(batch[0])
+            x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+            loss, params, opt_state = train_step(params, opt_state, x, y)
+            total_loss += loss
+        print(f"Average train epoch loss: {total_loss / len(train_loader)}")
         
         # save pickle
         # with open(f"params.pkl", "wb") as f:

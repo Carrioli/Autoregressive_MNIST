@@ -1,7 +1,7 @@
 from typing import Callable
 
 import jax.numpy as jnp
-from jax import jit, lax, nn, random, vmap, profiler
+from jax import jit, lax, nn, profiler, random, vmap
 from jax.random import PRNGKey
 from jaxtyping import Array
 
