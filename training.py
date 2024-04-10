@@ -2,9 +2,10 @@ import os
 import pickle
 
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import optax
-from jax import devices, jit, nn, random, value_and_grad, config, vmap
+from jax import config, devices, jit, nn, random, value_and_grad, vmap
 from jax.tree_util import tree_flatten
 from PIL import Image
 from tqdm import tqdm
@@ -14,20 +15,37 @@ from model import batched_forward, create_attention_mask, init_params
 
 # shrink_factors = [1,2,4,7,8,14,16,28,49,56,98,112,196,392]
 
-def save_batch_images(batch, batch_index, epoch_index, save_dir='saved_images'):
+def colorize_batch(batch, index):
+    # Reshape the batch for vectorized operations
+    images_vector = batch.reshape(batch.shape[0], 784)
+    
+    # Create a new RGB batch where all pixels are initially set to black
+    rgb_batch = np.zeros((batch.shape[0], 784, 3))
+    
+    # Copy the grayscale values to all channels before the index for all images
+    rgb_batch[:, :index, 0] = images_vector[:, :index]
+    rgb_batch[:, :index, 1] = images_vector[:, :index]
+    rgb_batch[:, :index, 2] = images_vector[:, :index]
+    
+    # Colorize the pixels after the specified index in red for all images
+    rgb_batch[:, index:, 0] = images_vector[:, index:]
+    
+    # Reshape the rgb batch back to the original shape but with 3 channels for all images
+    rgb_batch_reshaped = rgb_batch.reshape(batch.shape[0], 28, 28, 3)
+    return rgb_batch_reshaped
+
+
+def save_batch(batch, predicted_batch, epoch_index, save_dir='saved_images'):
     os.makedirs(save_dir, exist_ok=True)
     
-    # Convert the JAX array to a NumPy array if it's not already
-    batch_np = np.array(batch)  # Assuming batch is a jnp.array
-    batch_np = batch_np.reshape((-1, 28, 28))
+    colorized_batch = colorize_batch(predicted_batch, original_n_unmasked)
+    
+    batch = jnp.stack([batch, batch, batch], axis=-1)
+    
+    combined_batch = jnp.concatenate([batch, colorized_batch], axis=-2) / 255
 
-    for i, img in enumerate(batch_np):
-        # Convert the 2D numpy array to a PIL image (assuming grayscale)
-        img_pil = Image.fromarray(img)
-        if img_pil.mode != 'L':
-            img_pil = img_pil.convert('L')  # Convert to grayscale if not already
-        
-        img_pil.save(os.path.join(save_dir, f'epoch_{epoch_index}_batch_{batch_index}_image_{i}.png'))
+    for i, img in enumerate(combined_batch):
+        plt.imsave(f'{save_dir}/epoch_{epoch_index}_item_{i}.png', img)
 
 
 def inverse_transform(matrix, original_shape, patch_shape):
@@ -77,17 +95,17 @@ def test_a_batch(batch, params):
     labels = batch[:, original_n_unmasked:]
     out_probabilities = out_probabilities.reshape(-1, out_probabilities.shape[-1])
     average_batch_nll = nll(out_probabilities, labels.flatten())
-    prediction = vmap(inverse_transform, in_axes=(0, None, None))(prediction, (28, 28), patch_shape)
     return prediction, average_batch_nll
 
 
 def test_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
     predicted_batch, average_batch_nll = test_a_batch(batch, params)
+    predicted_batch = vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
+    batch           = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     print("Average test NLL over batch:", average_batch_nll)
-    batch = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     print("Average test L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
-    save_batch_images(predicted_batch, batch_index=0, epoch_index=epoch)
+    save_batch(batch, predicted_batch, epoch_index=epoch)
 
 
 def train_and_test(train_loader, test_loader, params, opt_state):

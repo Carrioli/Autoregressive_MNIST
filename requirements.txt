@@ -7,3 +7,4 @@ optax
 tqdm
 Pillow
 ml-collections
+matplotlib

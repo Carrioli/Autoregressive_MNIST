@@ -2,6 +2,8 @@
 import torch
 from torchvision import datasets, transforms
 
+# set random seed for reproducibility
+torch.manual_seed(0)
 
 def transform(matrix, patch_shape):
     
