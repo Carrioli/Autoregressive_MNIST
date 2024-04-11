@@ -74,11 +74,6 @@ def train_step(params, opt_state, x, y):
     return loss, params, opt_state
 
 
-def cross_entropy_loss(logits, labels):
-    labels_one_hot = nn.one_hot(labels, num_classes)
-    return -jnp.sum(labels_one_hot * logits)
-
-
 @jit
 def test_a_batch(batch, params):
     prediction = batch[:, :original_n_unmasked]
@@ -93,17 +88,15 @@ def test_a_batch(batch, params):
         prediction = jnp.concatenate([prediction, out], axis=-1)
 
     labels = batch[:, original_n_unmasked:]
-    average_batch_nll = jnp.mean(cross_entropy_loss(logits, labels))
     average_softmax_cross_entropy = jnp.mean(optax.softmax_cross_entropy_with_integer_labels(logits, labels))
-    return prediction, average_batch_nll, average_softmax_cross_entropy
+    return prediction, average_softmax_cross_entropy
 
 
 def test_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
-    predicted_batch, average_batch_nll, average_softmax_cross_entropy = test_a_batch(batch, params)
-    print("Average test NLL over batch:", average_batch_nll)
+    predicted_batch, average_softmax_cross_entropy = test_a_batch(batch, params)
+    print("Average test softmax cross entropy loss:", average_softmax_cross_entropy)
     print("Average test L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
-    print("Average test softmax cross entropy:", average_softmax_cross_entropy)
     predicted_batch = vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
     batch           = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     save_batch(batch, predicted_batch, epoch_index=epoch)
@@ -118,7 +111,7 @@ def train_and_test(train_loader, test_loader, params, opt_state):
             x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
             loss, params, opt_state = train_step(params, opt_state, x, y)
             total_loss += loss
-        print(f"Average train epoch loss: {total_loss / len(train_loader)}")
+        print(f"Average train loss: {total_loss / len(train_loader)}")
         
         # save pickle
         # with open(f"params.pkl", "wb") as f:
@@ -139,7 +132,7 @@ d_v            = 8
 patch_shape    = (4, 4)
 shrink_factor  = patch_shape[0] * patch_shape[1]
 seq_len        = 784 - shrink_factor
-original_n_unmasked = 448
+original_n_unmasked = 320
 
 assert seq_len % shrink_factor == 0, "Sequence length must be divisible by the shrink factor"
 assert original_n_unmasked % shrink_factor == 0, "Unmasked elements (should) be divisible by the shrink factor"
