@@ -38,8 +38,6 @@ def save_batch(batch, predicted_batch, epoch_index, save_dir='saved_images'):
     os.makedirs(save_dir, exist_ok=True)
     colorized_batch = colorize_batch(predicted_batch, original_n_unmasked)
     batch = jnp.stack([batch, batch, batch], axis=-1)
-    batch = jnp.stack([batch, batch, batch], axis=-1)
-    batch = jnp.stack([batch, batch, batch], axis=-1)
     combined_batch = jnp.concatenate([batch, colorized_batch], axis=-2) / 255
 
     for i, img in enumerate(combined_batch):
@@ -129,6 +127,7 @@ def main(train_loader, test_loader, params, opt_state):
     for epoch in range(100):
         print('Epoch: ' + str(epoch + 1))
         params, opt_state = train(train_loader, params, opt_state)
+        
         test(test_loader, params)
         
         # save_params(params, f"params.pkl")
