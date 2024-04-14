@@ -64,11 +64,19 @@ def loss_fn(params, x, y):
 
 
 @jit
-def train_step(params, opt_state, x, y):
+def train_step(params, opt_state, batch):
+    x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
     loss, grads = value_and_grad(loss_fn)(params, x, y)
     updates, opt_state = optimizer.update(grads, opt_state, params = params)
     params = optax.apply_updates(params, updates)    
     return loss, params, opt_state
+
+
+@jit
+def test_step(params, batch):
+    x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+    loss, _ = value_and_grad(loss_fn)(params, x, y)
+    return loss
 
 
 @jit
@@ -101,9 +109,7 @@ def inference_and_save(test_loader, params, epoch):
 def train(train_loader, params, opt_state):
     train_loss = 0 
     for batch in tqdm(train_loader):
-        batch = jnp.array(batch[0])
-        x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-        loss, params, opt_state = train_step(params, opt_state, x, y)
+        loss, params, opt_state = train_step(params, opt_state, jnp.array(batch[0]))
         train_loss += loss
     print(f"Average train loss: {train_loss / len(train_loader)}")
     return params, opt_state
@@ -112,10 +118,7 @@ def train(train_loader, params, opt_state):
 def test(test_loader, params):
     test_loss = 0
     for batch in test_loader:
-        batch = jnp.array(batch[0])
-        x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-        loss, _ = value_and_grad(loss_fn)(params, x, y)
-        test_loss += loss
+        test_loss += test_step(params, jnp.array(batch[0]))
     print(f"Average test loss: {test_loss / len(test_loader)}")
 
 
