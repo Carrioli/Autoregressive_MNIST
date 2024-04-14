@@ -36,11 +36,10 @@ def colorize_batch(batch, index):
 
 def save_batch(batch, predicted_batch, epoch_index, save_dir='saved_images'):
     os.makedirs(save_dir, exist_ok=True)
-    
     colorized_batch = colorize_batch(predicted_batch, original_n_unmasked)
-    
     batch = jnp.stack([batch, batch, batch], axis=-1)
-    
+    batch = jnp.stack([batch, batch, batch], axis=-1)
+    batch = jnp.stack([batch, batch, batch], axis=-1)
     combined_batch = jnp.concatenate([batch, colorized_batch], axis=-2) / 255
 
     for i, img in enumerate(combined_batch):
@@ -75,9 +74,8 @@ def train_step(params, opt_state, x, y):
 
 
 @jit
-def test_a_batch(batch, params):
+def batch_inference(batch, params):
     prediction = batch[:, :original_n_unmasked]
-    
     logits = jnp.empty((batch_size, 0, num_classes)) 
 
     while prediction.shape[-1] != (seq_len + shrink_factor):
@@ -92,33 +90,51 @@ def test_a_batch(batch, params):
     return prediction, average_softmax_cross_entropy
 
 
-def test_and_save(test_loader, params, epoch):
+def inference_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
-    predicted_batch, average_softmax_cross_entropy = test_a_batch(batch, params)
-    print("Average test softmax cross entropy loss:", average_softmax_cross_entropy)
-    print("Average test L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
+    predicted_batch, average_softmax_cross_entropy = batch_inference(batch, params)
+    print("Average inference loss:", average_softmax_cross_entropy)
+    print("Average inference L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
     predicted_batch = vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
     batch           = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     save_batch(batch, predicted_batch, epoch_index=epoch)
 
 
-def train_and_test(train_loader, test_loader, params, opt_state):
-    for epoch in range(66):
-        total_loss = 0 
+def train(train_loader, params, opt_state):
+    train_loss = 0 
+    for batch in tqdm(train_loader):
+        batch = jnp.array(batch[0])
+        x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+        loss, params, opt_state = train_step(params, opt_state, x, y)
+        train_loss += loss
+    print(f"Average train loss: {train_loss / len(train_loader)}")
+    return params, opt_state
+
+
+def test(test_loader, params):
+    test_loss = 0
+    for batch in test_loader:
+        batch = jnp.array(batch[0])
+        x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+        loss, _ = value_and_grad(loss_fn)(params, x, y)
+        test_loss += loss
+    print(f"Average test loss: {test_loss / len(test_loader)}")
+
+
+def save_params(params, path):
+    with open(path, "wb") as f:
+        pickle.dump(params, f)
+
+def main(train_loader, test_loader, params, opt_state):
+    for epoch in range(100):
         print('Epoch: ' + str(epoch + 1))
-        for batch in tqdm(train_loader):
-            batch = jnp.array(batch[0])
-            x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-            loss, params, opt_state = train_step(params, opt_state, x, y)
-            total_loss += loss
-        print(f"Average train loss: {total_loss / len(train_loader)}")
+        params, opt_state = train(train_loader, params, opt_state)
+        test(test_loader, params)
         
-        # save pickle
-        # with open(f"params.pkl", "wb") as f:
-        #     pickle.dump(params, f)
+        # save_params(params, f"params.pkl")
         
         if (epoch) % 1 == 0:
-            test_and_save(test_loader, params, epoch)
+            inference_and_save(test_loader, params, epoch)
 
 
 n_outer_blocks = 1
@@ -160,5 +176,5 @@ train_loader, test_loader = create_mnist_dataset(bsz=batch_size, patch_shape=pat
 count_params(params)
 print("Available devices:", devices())
 
-train_and_test(train_loader, test_loader, params, opt_state)
+main(train_loader, test_loader, params, opt_state)
 
