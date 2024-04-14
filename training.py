@@ -95,7 +95,7 @@ def inference_and_save(test_loader, params, epoch):
     print("Average inference L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
     predicted_batch = vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
     batch           = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
-    save_batch(batch, predicted_batch, epoch_index=epoch)
+    save_batch(batch, predicted_batch, epoch)
 
 
 def train(train_loader, params, opt_state):
@@ -124,8 +124,8 @@ def save_params(params, path):
         pickle.dump(params, f)
 
 def main(train_loader, test_loader, params, opt_state):
-    for epoch in range(100):
-        print('Epoch: ' + str(epoch + 1))
+    for epoch in range(1, 100):
+        print('Epoch: ' + str(epoch))
         params, opt_state = train(train_loader, params, opt_state)
         
         test(test_loader, params)
