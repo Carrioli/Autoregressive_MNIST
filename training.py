@@ -141,7 +141,7 @@ def main(train_loader, test_loader, params, opt_state):
 
 n_outer_blocks = 1
 n_transformers = 36
-n_blocks       = 2
+n_blocks       = 1
 n_heads        = 36
 num_classes    = 256 # same as d_out
 d_model        = 64 # same as feature size
