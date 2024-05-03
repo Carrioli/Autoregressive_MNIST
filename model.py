@@ -26,16 +26,14 @@ def init_params(initializer: Callable,
                 shrink_factor: int,
                 key: PRNGKey) -> Array:
     params_keys = random.split(key, 10)
-    embeddings  = initializer(params_keys[0], (num_classes, d_model))
+    conv        = initializer(params_keys[0], (shrink_factor, 1, d_model))
     wq          = initializer(params_keys[1], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_qk))
-    e           = initializer(params_keys[2], (n_outer_blocks, n_transformers, n_blocks, n_heads, seq_len // shrink_factor, 1, shrink_factor))
-    wk          = initializer(params_keys[3], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_qk))
-    f           = initializer(params_keys[4], (n_outer_blocks, n_transformers, n_blocks, n_heads, seq_len // shrink_factor, shrink_factor, 1))
-    wv          = initializer(params_keys[5], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_v))
-    projection  = initializer(params_keys[6], (n_outer_blocks, n_transformers, n_blocks, n_heads * d_v, d_model))
-    out_proj    = initializer(params_keys[7], (n_outer_blocks, n_transformers * d_model, d_model))
-    final_proj  = initializer(params_keys[8], (d_model, num_classes))
-    return embeddings, wq, e, wk, f, wv, projection, out_proj, final_proj
+    wk          = initializer(params_keys[2], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_qk))
+    wv          = initializer(params_keys[3], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_v))
+    projection  = initializer(params_keys[5], (n_outer_blocks, n_transformers, n_blocks, n_heads * d_v, d_model))
+    out_proj    = initializer(params_keys[6], (n_outer_blocks, n_transformers * d_model, d_model))
+    deconv      = initializer(params_keys[4], (shrink_factor, d_model, num_classes))
+    return conv, wq, wk, wv, projection, out_proj, deconv
 
 
 def concat_heads(x: Array) -> Array:
@@ -43,42 +41,45 @@ def concat_heads(x: Array) -> Array:
     return x.reshape(x.shape[0], -1)
 
 
+def shrink_conv(x, kernel):
+    dn = lax.conv_dimension_numbers(x.shape, kernel.shape, ('NWC', 'WIO', 'NWC'))
+    shrink_factor = kernel.shape[0]
+    return lax.conv_general_dilated(x,
+                                    kernel,
+                                    (shrink_factor,), # window strides
+                                    'VALID',
+                                    (1,), # lhs_dilation
+                                    (1,), # rhs_dilation
+                                    dn)
+
+
+def expand_conv(x, kernel):
+    dn = lax.conv_dimension_numbers(x.shape, kernel.shape, ('NWC', 'WIO', 'NWC'))
+    shrink_factor = kernel.shape[0]
+    return lax.conv_general_dilated(x,
+                                    kernel,
+                                    (1,), # window strides
+                                    ((shrink_factor - 1, shrink_factor - 1),), # padding
+                                    (shrink_factor,), # lhs_dilation
+                                    (1,), # rhs_dilation
+                                    dn)
+
+
 # @profile
 def single_head_self_attention(x: Array,
                                params: Array,
                                mask: Array) -> Array:
-    wq, e, wk, f, wv = params
-    
-    # constants
-    seq_len, d_model = x.shape
-    shrink_factor = e.shape[-1]
-    d_qk = wq.shape[-1]
-    dv   = wv.shape[-1]
-
-    # for inference
-    e = e[:seq_len // shrink_factor]
-    f = f[:seq_len // shrink_factor]
-
-    # shrink
-    x = x.reshape(-1, shrink_factor, d_model)
-    x = jnp.matmul(e, x)
-    x = jnp.squeeze(x, axis=1)
+    wq, wk, wv = params
     
     Q = x @ wq
     K = x @ wk
-    scores = Q @ K.T / jnp.sqrt(d_qk)
+    scores = Q @ K.T / jnp.sqrt(wq.shape[-1])
     scores += mask
     attention_weights = nn.softmax(scores, axis=-1)
     V = x @ wv
     out = attention_weights @ V
     
-    # expand
-    out = jnp.expand_dims(out, axis=1)
-    out = jnp.matmul(f, out)
-    out = out.reshape(-1, dv)
-
     return out
-
 
 def transformer_block(x: Array,
                       params: Array,
@@ -98,11 +99,11 @@ def transformer(x: Array,
                 params: Array,
                 n_blocks: int,
                 mask: Array) -> Array:
-    wq, e, wk, f, wv, projection = params
+    wq, wk, wv, projection = params
     return lax.fori_loop(0,
                          n_blocks,
                          lambda i, x: transformer_block(x,
-                                                        (wq[i], e[i], wk[i], f[i], wv[i], projection[i]),
+                                                        (wq[i], wk[i], wv[i], projection[i]),
                                                         mask),
                          x)
 
@@ -127,16 +128,26 @@ def super_transformer(x: Array,
                       n_outer_blocks: int,
                       n_blocks: int,
                       mask: Array) -> Array:
-    embeddings, wq, e, wk, f, wv, projection, out_proj, final_proj = params
-    x = jnp.take(embeddings, x, axis=0)
+    conv, wq, wk, wv, projection, out_proj, deconv = params
+    
+    # shrink conv
+    x = jnp.expand_dims(x, axis=(0, -1))
+    x = shrink_conv(x, conv)
+    x = x.squeeze()
+    
+    
     out = lax.fori_loop(0,
                         n_outer_blocks,
                         lambda i, x: super_block(x,
-                                                (wq[i], e[i], wk[i], f[i], wv[i], projection[i], out_proj[i]),
+                                                (wq[i], wk[i], wv[i], projection[i], out_proj[i]),
                                                 n_blocks,
                                                 mask),
                         x)
-    return jnp.dot(out, final_proj)
+    
+    # expand conv
+    out = jnp.expand_dims(out, axis=0)
+    out = expand_conv(out, deconv)
+    return out.squeeze()
 
 
 # adding batch dimension

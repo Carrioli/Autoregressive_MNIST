@@ -25,7 +25,7 @@ def create_mnist_dataset(bsz, patch_shape):
         [
             transforms.ToTensor(),
             transforms.Lambda(
-                lambda x: transform((x * 255).int().squeeze(), patch_shape)
+                lambda x: transform((x * 255).squeeze(), patch_shape)
             )
         ]
     )

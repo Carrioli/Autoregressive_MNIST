@@ -60,7 +60,7 @@ def count_params(params):
 
 def loss_fn(params, x, y):
     pred_y = batched_forward(x, params, n_outer_blocks, n_blocks, mask)
-    return jnp.mean(optax.softmax_cross_entropy_with_integer_labels(pred_y, y))
+    return jnp.mean(optax.softmax_cross_entropy_with_integer_labels(pred_y, y.astype(jnp.int32)))
 
 
 @jit
@@ -92,7 +92,7 @@ def batch_inference(batch, params):
         prediction = jnp.concatenate([prediction, out], axis=-1)
 
     labels = batch[:, original_n_unmasked:]
-    average_softmax_cross_entropy = jnp.mean(optax.softmax_cross_entropy_with_integer_labels(logits, labels))
+    average_softmax_cross_entropy = jnp.mean(optax.softmax_cross_entropy_with_integer_labels(logits, labels.astype(jnp.int32)))
     return prediction, average_softmax_cross_entropy
 
 
