@@ -79,7 +79,7 @@ def test_step(params, batch):
     return loss
 
 
-@jit
+# @jit
 def batch_inference(batch, params):
     prediction = batch[:, :original_n_unmasked]
     logits = jnp.empty((batch_size, 0, num_classes)) 
@@ -126,6 +126,7 @@ def save_params(params, path):
     with open(path, "wb") as f:
         pickle.dump(params, f)
 
+
 def main(train_loader, test_loader, params, opt_state):
     for epoch in range(1, 100):
         print('Epoch: ' + str(epoch))
@@ -145,8 +146,8 @@ n_blocks       = 1
 n_heads        = 36
 num_classes    = 256 # same as d_out
 d_model        = 64 # same as feature size
-d_qk           = 8
-d_v            = 8
+d_qk           = 32
+d_v            = 32
 patch_shape    = (4, 4)
 shrink_factor  = patch_shape[0] * patch_shape[1]
 seq_len        = 784 - shrink_factor

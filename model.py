@@ -32,8 +32,9 @@ def init_params(initializer: Callable,
     wv          = initializer(params_keys[3], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_v))
     projection  = initializer(params_keys[5], (n_outer_blocks, n_transformers, n_blocks, n_heads * d_v, d_model))
     out_proj    = initializer(params_keys[6], (n_outer_blocks, n_transformers * d_model, d_model))
-    deconv      = initializer(params_keys[4], (shrink_factor, d_model, num_classes))
-    return conv, wq, wk, wv, projection, out_proj, deconv
+    f           = initializer(params_keys[4], (seq_len // shrink_factor, shrink_factor, 1))
+    final_proj  = initializer(params_keys[8], (d_model, num_classes))
+    return conv, wq, wk, wv, projection, out_proj, f, final_proj
 
 
 def concat_heads(x: Array) -> Array:
@@ -50,7 +51,8 @@ def shrink_conv(x, kernel):
                                     'VALID',
                                     (1,), # lhs_dilation
                                     (1,), # rhs_dilation
-                                    dn)
+                                    dn,
+                                    precision=lax.Precision.HIGH)
 
 
 def expand_conv(x, kernel):
@@ -62,7 +64,8 @@ def expand_conv(x, kernel):
                                     ((shrink_factor - 1, shrink_factor - 1),), # padding
                                     (shrink_factor,), # lhs_dilation
                                     (1,), # rhs_dilation
-                                    dn)
+                                    dn,
+                                    precision=lax.Precision.HIGH)
 
 
 # @profile
@@ -128,7 +131,7 @@ def super_transformer(x: Array,
                       n_outer_blocks: int,
                       n_blocks: int,
                       mask: Array) -> Array:
-    conv, wq, wk, wv, projection, out_proj, deconv = params
+    conv, wq, wk, wv, projection, out_proj, f, final_proj = params
     
     # shrink conv
     x = jnp.expand_dims(x, axis=(0, -1))
@@ -145,9 +148,12 @@ def super_transformer(x: Array,
                         x)
     
     # expand conv
-    out = jnp.expand_dims(out, axis=0)
-    out = expand_conv(out, deconv)
-    return out.squeeze()
+    out = jnp.expand_dims(out, axis=1)
+    f = f[:out.shape[0]]
+    out = jnp.matmul(f, out)
+    out = out.reshape(-1, out.shape[-1])
+    
+    return jnp.dot(out, final_proj)
 
 
 # adding batch dimension
