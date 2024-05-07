@@ -59,7 +59,7 @@ def count_params(params):
 
 
 def loss_fn(params, x, y):
-    pred_y = batched_forward(x, params, n_outer_blocks, n_blocks, mask)
+    pred_y = batched_forward(x, params, n_level_1_blocks, n_level_0_blocks, mask)
     return jnp.mean(optax.softmax_cross_entropy_with_integer_labels(pred_y, y))
 
 
@@ -85,7 +85,7 @@ def batch_inference(batch, params):
     logits = jnp.empty((batch_size, 0, num_classes)) 
 
     while prediction.shape[-1] != (seq_len + shrink_factor):
-        out = batched_forward(prediction, params, n_outer_blocks, n_blocks, mask=0)
+        out = batched_forward(prediction, params, n_level_1_blocks, n_level_0_blocks, mask=0)
         out = out[:, -shrink_factor:, :]
         logits = jnp.concatenate([logits, out], axis=1)
         out = jnp.argmax(out, axis=-1)
@@ -139,17 +139,17 @@ def main(train_loader, test_loader, params, opt_state):
             inference_and_save(test_loader, params, epoch)
 
 
-n_outer_blocks = 1
-n_transformers = 36
-n_blocks       = 1
-n_heads        = 36
-num_classes    = 256 # same as d_out
-d_model        = 64 # same as feature size
-d_qk           = 8
-d_v            = 8
-patch_shape    = (4, 4)
-shrink_factor  = patch_shape[0] * patch_shape[1]
-seq_len        = 784 - shrink_factor
+n_level_1_blocks = 1
+n_level_0_transformers = 36
+n_level_0_blocks = 1
+n_heads = 36
+num_classes = 256  # same as d_out
+d_model = 64  # same as feature size
+d_qk = 8
+d_v = 8
+patch_shape = (4, 4)
+shrink_factor = patch_shape[0] * patch_shape[1]
+seq_len = 784 - shrink_factor
 original_n_unmasked = 320
 
 assert seq_len % shrink_factor == 0, "Sequence length must be divisible by the shrink factor"
@@ -165,7 +165,18 @@ try:
         params = pickle.load(f)
 except FileNotFoundError:
     print("No params.pkl file found, initializing new parameters")
-    params = init_params(initializer, n_outer_blocks, n_transformers, n_blocks, n_heads, num_classes, d_model, seq_len, d_qk, d_v, shrink_factor, params_key)
+    params = init_params(initializer, 
+                         n_level_1_blocks, 
+                         n_level_0_transformers, 
+                         n_level_0_blocks, 
+                         n_heads, 
+                         num_classes, 
+                         d_model, 
+                         seq_len, 
+                         d_qk, 
+                         d_v, 
+                         shrink_factor, 
+                         params_key)
 
 optimizer = optax.lion(2e-4)
 opt_state = optimizer.init(params)
