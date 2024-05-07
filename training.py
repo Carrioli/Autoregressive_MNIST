@@ -59,7 +59,7 @@ def count_params(params):
 
 
 def loss_fn(params, x, y):
-    pred_y = batched_forward(x, params, n_level_1_blocks, n_level_0_blocks, mask)
+    pred_y = batched_forward(x, params, n_level_2_blocks, n_level_1_blocks, n_level_0_blocks, mask)
     return jnp.mean(optax.softmax_cross_entropy_with_integer_labels(pred_y, y))
 
 
@@ -85,7 +85,7 @@ def batch_inference(batch, params):
     logits = jnp.empty((batch_size, 0, num_classes)) 
 
     while prediction.shape[-1] != (seq_len + shrink_factor):
-        out = batched_forward(prediction, params, n_level_1_blocks, n_level_0_blocks, mask=0)
+        out = batched_forward(prediction, params, n_level_2_blocks, n_level_1_blocks, n_level_0_blocks, mask=0)
         out = out[:, -shrink_factor:, :]
         logits = jnp.concatenate([logits, out], axis=1)
         out = jnp.argmax(out, axis=-1)
@@ -139,10 +139,12 @@ def main(train_loader, test_loader, params, opt_state):
             inference_and_save(test_loader, params, epoch)
 
 
+n_level_2_blocks = 1
+n_level_1_transformers = 12
 n_level_1_blocks = 1
-n_level_0_transformers = 36
+n_level_0_transformers = 12
 n_level_0_blocks = 1
-n_heads = 36
+n_heads = 12
 num_classes = 256  # same as d_out
 d_model = 64  # same as feature size
 d_qk = 8
@@ -166,6 +168,8 @@ try:
 except FileNotFoundError:
     print("No params.pkl file found, initializing new parameters")
     params = init_params(initializer, 
+                         n_level_2_blocks,
+                         n_level_1_transformers,
                          n_level_1_blocks, 
                          n_level_0_transformers, 
                          n_level_0_blocks, 

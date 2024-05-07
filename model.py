@@ -14,6 +14,8 @@ def create_attention_mask(size: int, n_unmasked: int) -> Array:
 
 
 def init_params(initializer: Callable,
+                n_level_2_blocks: int,
+                n_level_1_transformers: int,
                 n_level_1_blocks: int,
                 n_level_0_transformers: int,
                 n_level_0_blocks: int,
@@ -25,17 +27,18 @@ def init_params(initializer: Callable,
                 d_v: int,
                 shrink_factor: int,
                 key: PRNGKey) -> Array:
-    params_keys  = random.split(key, 10)
+    params_keys  = random.split(key, 20)
     embeddings   = initializer(params_keys[0], (num_classes, d_model))
-    wq           = initializer(params_keys[1], (n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, d_model, d_qk))
-    e            = initializer(params_keys[2], (n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, seq_len // shrink_factor, 1, shrink_factor))
-    wk           = initializer(params_keys[3], (n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, d_model, d_qk))
-    f            = initializer(params_keys[4], (n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, seq_len // shrink_factor, shrink_factor, 1))
-    wv           = initializer(params_keys[5], (n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, d_model, d_v))
-    level_0_proj = initializer(params_keys[6], (n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads * d_v, d_model))
-    level_1_proj = initializer(params_keys[7], (n_level_1_blocks, n_level_0_transformers * d_model, d_model))
-    final_proj   = initializer(params_keys[8], (d_model, num_classes))
-    return embeddings, wq, e, wk, f, wv, level_0_proj, level_1_proj, final_proj
+    wq           = initializer(params_keys[1], (n_level_2_blocks, n_level_1_transformers, n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, d_model, d_qk))
+    e            = initializer(params_keys[2], (n_level_2_blocks, n_level_1_transformers, n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, seq_len // shrink_factor, 1, shrink_factor))
+    wk           = initializer(params_keys[3], (n_level_2_blocks, n_level_1_transformers, n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, d_model, d_qk))
+    f            = initializer(params_keys[4], (n_level_2_blocks, n_level_1_transformers, n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, seq_len // shrink_factor, shrink_factor, 1))
+    wv           = initializer(params_keys[5], (n_level_2_blocks, n_level_1_transformers, n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads, d_model, d_v))
+    level_0_proj = initializer(params_keys[6], (n_level_2_blocks, n_level_1_transformers, n_level_1_blocks, n_level_0_transformers, n_level_0_blocks, n_heads * d_v, d_model))
+    level_1_proj = initializer(params_keys[7], (n_level_2_blocks, n_level_1_transformers, n_level_1_blocks, n_level_0_transformers * d_model, d_model))
+    level_2_proj = initializer(params_keys[8], (n_level_2_blocks, n_level_1_transformers * d_model, d_model))
+    final_proj   = initializer(params_keys[9], (d_model, num_classes))
+    return embeddings, wq, e, wk, f, wv, level_0_proj, level_1_proj, level_2_proj, final_proj
 
 
 def normalize(x: Array) -> Array:
@@ -87,8 +90,8 @@ def single_head_self_attention(x: Array,
 
 
 def level_0_block(x: Array,
-                      params: Array,
-                      mask: Array) -> Array:
+                  params: Array,
+                  mask: Array) -> Array:
     *params, level_0_proj = params
     attention = vmap(single_head_self_attention, in_axes=(None, 0, None))(x, params, mask)
     attention = concat_heads(attention)
@@ -97,40 +100,69 @@ def level_0_block(x: Array,
 
 
 def level_0_transformer(x: Array,
-                params: Array,
-                n_level_0_blocks: int,
-                mask: Array) -> Array:
+                        params: Array,
+                        n_level_0_blocks: int,
+                        mask: Array) -> Array:
     wq, e, wk, f, wv, level_0_proj = params
     return lax.fori_loop(0,
                          n_level_0_blocks,
                          lambda i, x: level_0_block(x,
-                                                        (wq[i], e[i], wk[i], f[i], wv[i], level_0_proj[i]),
-                                                        mask),
+                                                    (wq[i], e[i], wk[i], f[i], wv[i], level_0_proj[i]),
+                                                    mask),
                          x)
 
 
 def level_1_block(x: Array,
-                params: Array,
-                n_level_0_blocks: int,
-                mask: Array) -> Array:
+                  params: Array,
+                  n_level_0_blocks: int,
+                  mask: Array) -> Array:
     *params, level_1_proj = params
-    super_attention = vmap(level_0_transformer, in_axes=(None, 0, None, None))(x, params, n_level_0_blocks, mask)
-    super_attention = concat_heads(super_attention)
-    super_attention = jnp.dot(super_attention, level_1_proj)
-    return normalize(super_attention + x)
+    attention = vmap(level_0_transformer, in_axes=(None, 0, None, None))(x, params, n_level_0_blocks, mask)
+    attention = concat_heads(attention)
+    attention = jnp.dot(attention, level_1_proj)
+    return normalize(attention + x)
 
 
 def level_1_transformer(x: Array,
+                        params: Array,
+                        n_level_1_blocks: int,
+                        n_level_0_blocks: int,
+                        mask: Array) -> Array:
+    wq, e, wk, f, wv, level_0_proj, level_1_proj = params
+    return lax.fori_loop(0,
+                         n_level_1_blocks,
+                         lambda i, x: level_1_block(x,
+                                                    (wq[i], e[i], wk[i], f[i], wv[i], level_0_proj[i], level_1_proj[i]),
+                                                    n_level_0_blocks,
+                                                    mask),
+                         x)
+
+
+def level_2_block(x: Array,
+                params: Array,
+                n_level_1_blocks: int,
+                n_level_0_blocks: int,
+                mask: Array) -> Array:
+    *params, level_2_proj = params
+    attention = vmap(level_1_transformer, in_axes=(None, 0, None, None, None))(x, params, n_level_1_blocks, n_level_0_blocks, mask)
+    attention = concat_heads(attention)
+    attention = jnp.dot(attention, level_2_proj)
+    return normalize(attention + x)
+
+
+def level_2_transformer(x: Array,
                       params: Array,
+                      n_level_2_blocks: int,
                       n_level_1_blocks: int,
                       n_level_0_blocks: int,
                       mask: Array) -> Array:
-    embeddings, wq, e, wk, f, wv, level_0_proj, level_1_proj, final_proj = params
+    embeddings, wq, e, wk, f, wv, level_0_proj, level_1_proj, level_2_proj, final_proj = params
     x = jnp.take(embeddings, x, axis=0)
     out = lax.fori_loop(0,
-                        n_level_1_blocks,
-                        lambda i, x: level_1_block(x,
-                                                (wq[i], e[i], wk[i], f[i], wv[i], level_0_proj[i], level_1_proj[i]),
+                        n_level_2_blocks,
+                        lambda i, x: level_2_block(x,
+                                                (wq[i], e[i], wk[i], f[i], wv[i], level_0_proj[i], level_1_proj[i], level_2_proj[i]),
+                                                n_level_1_blocks,
                                                 n_level_0_blocks,
                                                 mask),
                         x)
@@ -140,9 +172,10 @@ def level_1_transformer(x: Array,
 # adding batch dimension
 def batched_forward(x: Array,
                     params: Array,
+                    n_level_2_blocks: int,
                     n_level_1_blocks: int,
                     n_level_0_blocks: int,
                     mask: Array) -> Array:
-    return vmap(level_1_transformer, in_axes=(0, None, None, None, None))(x, params, n_level_1_blocks, n_level_0_blocks, mask)
+    return vmap(level_2_transformer, in_axes=(0, None, None, None, None, None))(x, params, n_level_2_blocks, n_level_1_blocks, n_level_0_blocks, mask)
 
 
