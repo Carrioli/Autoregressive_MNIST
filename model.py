@@ -120,7 +120,9 @@ def level_1_block(x: Array,
     attention = vmap(level_0_transformer, in_axes=(None, 0, None, None))(x, params, n_level_0_blocks, mask)
     attention = concat_heads(attention)
     attention = jnp.dot(attention, level_1_proj)
-    return normalize(attention + x)
+    attention = normalize(attention)
+    attention = nn.relu(attention)
+    return attention + x
 
 
 def level_1_transformer(x: Array,
@@ -147,7 +149,9 @@ def level_2_block(x: Array,
     attention = vmap(level_1_transformer, in_axes=(None, 0, None, None, None))(x, params, n_level_1_blocks, n_level_0_blocks, mask)
     attention = concat_heads(attention)
     attention = jnp.dot(attention, level_2_proj)
-    return normalize(attention + x)
+    attention = normalize(attention)
+    attention = nn.relu(attention)
+    return attention + x
 
 
 def level_2_transformer(x: Array,
@@ -166,7 +170,7 @@ def level_2_transformer(x: Array,
                                                 n_level_0_blocks,
                                                 mask),
                         x)
-    return jnp.dot(out, final_proj)
+    return jnp.dot(out, final_proj) # normalization and activation here?
 
 
 # adding batch dimension
