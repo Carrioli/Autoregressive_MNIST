@@ -180,6 +180,8 @@ except FileNotFoundError:
                          d_qk, 
                          d_v, 
                          shrink_factor, 
+                         3, 
+                         8, 
                          params_key)
 
 optimizer = optax.lion(2e-4)
