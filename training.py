@@ -79,27 +79,6 @@ def test_step(params, batch):
     return loss
 
 
-def compute_bpd_batched(logits, actual_pixels):
-    # Ensure logits are in probability form (log probabilities)
-    log_probs = logits - scipy.special.logsumexp(logits, axis=2, keepdims=True)
-    
-    # Extract the log probabilities corresponding to the actual pixel values
-    # We use advanced indexing to select the relevant log probabilities
-    batch_indices = jnp.arange(logits.shape[0])[:, None]  # Create a column vector of batch indices
-    pixel_indices = jnp.arange(logits.shape[1])[None, :]  # Create a row vector of pixel indices
-    
-    # We expand dimensions to broadcast indices for batched selection
-    selected_log_probs = log_probs[batch_indices, pixel_indices, actual_pixels]
-    
-    # Convert from nats to bits
-    log_probs_bits = selected_log_probs / jnp.log(2)
-    
-    # Compute average bits per pixel across all pixels and batches
-    avg_bits_per_pixel = -jnp.mean(log_probs_bits)  # Negate since we want positive value
-    
-    return avg_bits_per_pixel
-
-
 @jit
 def batch_inference(batch, params):
     prediction = batch[:, :original_n_unmasked]
@@ -112,16 +91,14 @@ def batch_inference(batch, params):
         out = jnp.argmax(out, axis=-1)
         prediction = jnp.concatenate([prediction, out], axis=-1)
 
-    bpd = compute_bpd_batched(nn.log_softmax(logits), batch[:, original_n_unmasked:])
     labels = batch[:, original_n_unmasked:]
     average_softmax_cross_entropy = jnp.mean(optax.softmax_cross_entropy_with_integer_labels(logits, labels))
-    return bpd, prediction, average_softmax_cross_entropy
+    return prediction, average_softmax_cross_entropy
 
 
 def inference_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
-    bpd, predicted_batch, average_softmax_cross_entropy = batch_inference(batch, params)
-    print("Average inference BPD:", bpd)
+    predicted_batch, average_softmax_cross_entropy = batch_inference(batch, params)
     print("Average inference loss:", average_softmax_cross_entropy)
     print("Average inference L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
     predicted_batch = vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
