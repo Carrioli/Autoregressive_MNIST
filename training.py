@@ -142,15 +142,15 @@ def main(train_loader, test_loader, params, opt_state):
 
 
 n_level_2_blocks = 1
-n_level_1_transformers = 4
+n_level_1_transformers = 5
 n_level_1_blocks = 1
-n_level_0_transformers = 8
+n_level_0_transformers = 10
 n_level_0_blocks = 1
 n_heads = 32
 num_classes = 256  # same as d_out
-d_model = 64  # same as feature size
-d_qk = 8
-d_v = 8
+d_model = 96  # same as feature size
+d_qk = 16
+d_v = 16
 patch_shape = (4, 4)
 shrink_factor = patch_shape[0] * patch_shape[1]
 seq_len = 784 - shrink_factor
