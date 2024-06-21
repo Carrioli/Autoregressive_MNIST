@@ -61,12 +61,13 @@ def count_params(params):
 
 
 def loss_fn(params, x, y):
-    pred_y = batched_forward(x, params, n_level_2_blocks, n_level_1_blocks, n_level_0_blocks, mask)
+    pred_y = batched_forward(x, params, l3_blocks, l2_blocks, l1_blocks, l0_blocks, mask)
     return jnp.mean(optax.softmax_cross_entropy_with_integer_labels(pred_y, y))
 
 
 @jit
 def train_step(params, opt_state, batch):
+    # batch = shard_data(batch)
     x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
     loss, grads = value_and_grad(loss_fn)(params, x, y)
     updates, opt_state = optimizer.update(grads, opt_state, params = params)
@@ -76,6 +77,7 @@ def train_step(params, opt_state, batch):
 
 @jit
 def test_step(params, batch):
+    # batch = shard_data(batch)
     x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
     loss, _ = value_and_grad(loss_fn)(params, x, y)
     return loss
@@ -85,10 +87,10 @@ def test_step(params, batch):
 # TODO rewrite this so that I can jit compile it and not throw nan
 def batch_inference(batch, params):
     prediction = batch[:, :original_n_unmasked]
-    logits = jnp.empty((batch_size, 0, num_classes)) 
+    logits = jnp.empty((batch_size, 0, n_classes)) 
 
     while prediction.shape[-1] != (seq_len + shrink_factor):
-        out = batched_forward(prediction, params, n_level_2_blocks, n_level_1_blocks, n_level_0_blocks, mask=0)
+        out = batched_forward(prediction, params, l3_blocks, l2_blocks, l1_blocks, l0_blocks, mask=0)
         out = out[:, -shrink_factor:, :]
         logits = jnp.concatenate([logits, out], axis=1)
         out = jnp.argmax(out, axis=-1)
@@ -112,10 +114,7 @@ def inference_and_save(test_loader, params, epoch):
 def train(train_loader, params, opt_state):
     train_loss = 0 
     for batch in tqdm(train_loader):
-        jnp_batch = jnp.array(batch[0])
-        sharding = PositionalSharding(mesh_utils.create_device_mesh((4,)))
-        y = device_put(jnp_batch, sharding.reshape(2, 2))
-        loss, params, opt_state = train_step(params, opt_state, y)
+        loss, params, opt_state = train_step(params, opt_state, jnp.array(batch[0]))
         train_loss += loss
     print(f"Average train loss: {train_loss / len(train_loader)}")
     return params, opt_state
@@ -124,16 +123,18 @@ def train(train_loader, params, opt_state):
 def test(test_loader, params):
     test_loss = 0
     for batch in test_loader:
-        jnp_batch = jnp.array(batch[0])
-        sharding = PositionalSharding(mesh_utils.create_device_mesh((4,)))
-        y = device_put(jnp_batch, sharding.reshape(2, 2))
-        test_loss += test_step(params, y)
+        test_loss += test_step(params, jnp.array(batch[0]))
     print(f"Average test loss: {test_loss / len(test_loader)}")
 
 
 def save_params(params, path):
     with open(path, "wb") as f:
         pickle.dump(params, f)
+
+
+def shard_data(data):
+    sharding = PositionalSharding(mesh_utils.create_device_mesh((4,)))
+    return device_put(data, sharding.reshape(2, 2))
 
 
 def train_and_test(train_loader, test_loader, params, opt_state):
@@ -152,25 +153,30 @@ def train_and_test(train_loader, test_loader, params, opt_state):
 
 
 if __name__ == "__main__":
-    n_level_2_blocks = 1
-    n_level_1_transformers = 5
-    n_level_1_blocks = 1
-    n_level_0_transformers = 10
-    n_level_0_blocks = 1
-    n_heads = 32
-    num_classes = 256  # same as d_out
-    d_model = 96  # same as feature size
-    d_qk = 16
-    d_v = 16
+    l3_blocks = 1
+    l2_tfms   = 2
+    l2_blocks = 1
+    l1_tfms   = 5
+    l1_blocks = 1
+    l0_tfms   = 10
+    l0_blocks = 1
+    n_heads   = 32
+    n_classes = 256 # same as d_out
+    d_model   = 96 # same as feature size
     patch_shape = (4, 4)
     shrink_factor = patch_shape[0] * patch_shape[1]
     seq_len = 784 - shrink_factor
+    d_qk = 16
+    d_v  = 16
+    
+    
+
     original_n_unmasked = 320
 
     assert seq_len % shrink_factor == 0, "Sequence length must be divisible by the shrink factor"
     assert original_n_unmasked % shrink_factor == 0, "Unmasked elements (should) be divisible by the shrink factor"
 
-    params_key = random.PRNGKey(48)
+    params_key = random.PRNGKey(42)
     initializer = nn.initializers.lecun_normal()
 
     # params
@@ -181,13 +187,15 @@ if __name__ == "__main__":
     except FileNotFoundError:
         print("No params.pkl file found, initializing new parameters")
         params = init_params(initializer, 
-                            n_level_2_blocks,
-                            n_level_1_transformers,
-                            n_level_1_blocks, 
-                            n_level_0_transformers, 
-                            n_level_0_blocks, 
+                            l3_blocks,
+                            l2_tfms,
+                            l2_blocks,
+                            l1_tfms, 
+                            l1_blocks, 
+                            l0_tfms,
+                            l0_blocks,
                             n_heads, 
-                            num_classes, 
+                            n_classes, 
                             d_model, 
                             seq_len, 
                             d_qk, 
