@@ -81,7 +81,8 @@ def test_step(params, batch):
     return loss
 
 
-@jit
+# @jit
+# TODO rewrite this so that I can jit compile it and not throw nan
 def batch_inference(batch, params):
     prediction = batch[:, :original_n_unmasked]
     logits = jnp.empty((batch_size, 0, num_classes)) 
@@ -113,7 +114,7 @@ def train(train_loader, params, opt_state):
     for batch in tqdm(train_loader):
         jnp_batch = jnp.array(batch[0])
         sharding = PositionalSharding(mesh_utils.create_device_mesh((4,)))
-        y = device_put.device_put(jnp_batch, sharding)
+        y = device_put(jnp_batch, sharding.reshape(2, 2))
         loss, params, opt_state = train_step(params, opt_state, y)
         train_loss += loss
     print(f"Average train loss: {train_loss / len(train_loader)}")
@@ -123,7 +124,10 @@ def train(train_loader, params, opt_state):
 def test(test_loader, params):
     test_loss = 0
     for batch in test_loader:
-        test_loss += test_step(params, jnp.array(batch[0]))
+        jnp_batch = jnp.array(batch[0])
+        sharding = PositionalSharding(mesh_utils.create_device_mesh((4,)))
+        y = device_put(jnp_batch, sharding.reshape(2, 2))
+        test_loss += test_step(params, y)
     print(f"Average test loss: {test_loss / len(test_loader)}")
 
 
@@ -142,7 +146,7 @@ def train_and_test(train_loader, test_loader, params, opt_state):
         
         # save_params(params, f"params.pkl")
         
-        if (epoch) % 1 == 0:
+        if (epoch) % 10 == 0:
             inference_and_save(test_loader, params, epoch)
 
 
