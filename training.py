@@ -5,9 +5,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
-from jax import config, devices, jit, nn, random, value_and_grad, vmap, scipy
+from jax import config, devices, jit, nn, random, value_and_grad, vmap, scipy, device_put
 from jax.tree_util import tree_flatten
 from tqdm import tqdm
+from jax.experimental import mesh_utils
+from jax.sharding import PositionalSharding
 
 from data import create_mnist_dataset
 from model import batched_forward, create_attention_mask, init_params
@@ -109,7 +111,10 @@ def inference_and_save(test_loader, params, epoch):
 def train(train_loader, params, opt_state):
     train_loss = 0 
     for batch in tqdm(train_loader):
-        loss, params, opt_state = train_step(params, opt_state, jnp.array(batch[0]))
+        jnp_batch = jnp.array(batch[0])
+        sharding = PositionalSharding(mesh_utils.create_device_mesh((4,)))
+        y = device_put.device_put(jnp_batch, sharding)
+        loss, params, opt_state = train_step(params, opt_state, y)
         train_loss += loss
     print(f"Average train loss: {train_loss / len(train_loader)}")
     return params, opt_state
@@ -127,7 +132,7 @@ def save_params(params, path):
         pickle.dump(params, f)
 
 
-def train(train_loader, test_loader, params, opt_state):
+def train_and_test(train_loader, test_loader, params, opt_state):
     for epoch in range(1, 100):
         print('Epoch: ' + str(epoch))
         
@@ -197,5 +202,5 @@ if __name__ == "__main__":
     count_params(params)
     print("Available devices:", devices())
 
-    train(train_loader, test_loader, params, opt_state)
+    train_and_test(train_loader, test_loader, params, opt_state)
 
