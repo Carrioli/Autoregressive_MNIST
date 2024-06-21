@@ -137,6 +137,11 @@ def shard_data(data):
     return device_put(data, sharding.reshape(2, 4))
 
 
+def is_congruent(x_shape, sharding_shape) -> bool:
+  return (len(x_shape) == len(sharding_shape) and
+          all(d1 % d2 == 0 for d1, d2 in zip(x_shape, sharding_shape)))
+
+
 def train_and_test(train_loader, test_loader, params, opt_state):
     for epoch in range(1, 100):
         print('Epoch: ' + str(epoch))
