@@ -133,8 +133,8 @@ def save_params(params, path):
 
 
 def shard_data(data):
-    sharding = PositionalSharding(mesh_utils.create_device_mesh((4,)))
-    return device_put(data, sharding.reshape(2, 2))
+    sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
+    return device_put(data, sharding.reshape(2, 4))
 
 
 def train_and_test(train_loader, test_loader, params, opt_state):
@@ -149,7 +149,6 @@ def train_and_test(train_loader, test_loader, params, opt_state):
         
         if (epoch) % 10 == 0:
             inference_and_save(test_loader, params, epoch)
-
 
 
 if __name__ == "__main__":
@@ -168,8 +167,6 @@ if __name__ == "__main__":
     seq_len = 784 - shrink_factor
     d_qk = 16
     d_v  = 16
-    
-    
 
     original_n_unmasked = 320
 
