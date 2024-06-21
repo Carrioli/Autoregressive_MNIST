@@ -67,7 +67,6 @@ def loss_fn(params, x, y):
 
 @jit
 def train_step(params, opt_state, batch):
-    # batch = shard_data(batch)
     x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
     loss, grads = value_and_grad(loss_fn)(params, x, y)
     updates, opt_state = optimizer.update(grads, opt_state, params = params)
@@ -77,7 +76,6 @@ def train_step(params, opt_state, batch):
 
 @jit
 def test_step(params, batch):
-    # batch = shard_data(batch)
     x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
     loss, _ = value_and_grad(loss_fn)(params, x, y)
     return loss
@@ -114,7 +112,7 @@ def inference_and_save(test_loader, params, epoch):
 def train(train_loader, params, opt_state):
     train_loss = 0 
     for batch in tqdm(train_loader):
-        loss, params, opt_state = train_step(params, opt_state, jnp.array(batch[0]))
+        loss, params, opt_state = train_step(params, opt_state, shard_data(jnp.array(batch[0])))
         train_loss += loss
     print(f"Average train loss: {train_loss / len(train_loader)}")
     return params, opt_state
@@ -123,7 +121,7 @@ def train(train_loader, params, opt_state):
 def test(test_loader, params):
     test_loss = 0
     for batch in test_loader:
-        test_loss += test_step(params, jnp.array(batch[0]))
+        test_loss += test_step(params, shard_data(jnp.array(batch[0])))
     print(f"Average test loss: {test_loss / len(test_loader)}")
 
 
@@ -143,7 +141,7 @@ def is_congruent(x_shape, sharding_shape) -> bool:
 
 
 def train_and_test(train_loader, test_loader, params, opt_state):
-    for epoch in range(1, 100):
+    for epoch in range(1, 30):
         print('Epoch: ' + str(epoch))
         
         params, opt_state = train(train_loader, params, opt_state)
@@ -160,9 +158,9 @@ if __name__ == "__main__":
     l3_blocks = 1
     l2_tfms   = 2
     l2_blocks = 1
-    l1_tfms   = 5
+    l1_tfms   = 3
     l1_blocks = 1
-    l0_tfms   = 10
+    l0_tfms   = 8
     l0_blocks = 1
     n_heads   = 32
     n_classes = 256 # same as d_out
