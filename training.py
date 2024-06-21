@@ -127,7 +127,7 @@ def save_params(params, path):
         pickle.dump(params, f)
 
 
-def main(train_loader, test_loader, params, opt_state):
+def train(train_loader, test_loader, params, opt_state):
     for epoch in range(1, 100):
         print('Epoch: ' + str(epoch))
         
@@ -141,59 +141,61 @@ def main(train_loader, test_loader, params, opt_state):
             inference_and_save(test_loader, params, epoch)
 
 
-n_level_2_blocks = 1
-n_level_1_transformers = 5
-n_level_1_blocks = 1
-n_level_0_transformers = 10
-n_level_0_blocks = 1
-n_heads = 32
-num_classes = 256  # same as d_out
-d_model = 96  # same as feature size
-d_qk = 16
-d_v = 16
-patch_shape = (4, 4)
-shrink_factor = patch_shape[0] * patch_shape[1]
-seq_len = 784 - shrink_factor
-original_n_unmasked = 320
 
-assert seq_len % shrink_factor == 0, "Sequence length must be divisible by the shrink factor"
-assert original_n_unmasked % shrink_factor == 0, "Unmasked elements (should) be divisible by the shrink factor"
+if __name__ == "__main__":
+    n_level_2_blocks = 1
+    n_level_1_transformers = 5
+    n_level_1_blocks = 1
+    n_level_0_transformers = 10
+    n_level_0_blocks = 1
+    n_heads = 32
+    num_classes = 256  # same as d_out
+    d_model = 96  # same as feature size
+    d_qk = 16
+    d_v = 16
+    patch_shape = (4, 4)
+    shrink_factor = patch_shape[0] * patch_shape[1]
+    seq_len = 784 - shrink_factor
+    original_n_unmasked = 320
 
-params_key = random.PRNGKey(48)
-initializer = nn.initializers.lecun_normal()
+    assert seq_len % shrink_factor == 0, "Sequence length must be divisible by the shrink factor"
+    assert original_n_unmasked % shrink_factor == 0, "Unmasked elements (should) be divisible by the shrink factor"
 
-# params
-try:
-    with open("params.pkl", "rb") as f:
-        print("Loading params from params.pkl")
-        params = pickle.load(f)
-except FileNotFoundError:
-    print("No params.pkl file found, initializing new parameters")
-    params = init_params(initializer, 
-                         n_level_2_blocks,
-                         n_level_1_transformers,
-                         n_level_1_blocks, 
-                         n_level_0_transformers, 
-                         n_level_0_blocks, 
-                         n_heads, 
-                         num_classes, 
-                         d_model, 
-                         seq_len, 
-                         d_qk, 
-                         d_v, 
-                         shrink_factor, 
-                         params_key)
+    params_key = random.PRNGKey(48)
+    initializer = nn.initializers.lecun_normal()
 
-optimizer = optax.lion(2e-4)
-opt_state = optimizer.init(params)
+    # params
+    try:
+        with open("params.pkl", "rb") as f:
+            print("Loading params from params.pkl")
+            params = pickle.load(f)
+    except FileNotFoundError:
+        print("No params.pkl file found, initializing new parameters")
+        params = init_params(initializer, 
+                            n_level_2_blocks,
+                            n_level_1_transformers,
+                            n_level_1_blocks, 
+                            n_level_0_transformers, 
+                            n_level_0_blocks, 
+                            n_heads, 
+                            num_classes, 
+                            d_model, 
+                            seq_len, 
+                            d_qk, 
+                            d_v, 
+                            shrink_factor, 
+                            params_key)
 
-mask = create_attention_mask(seq_len // shrink_factor, original_n_unmasked // shrink_factor)
+    optimizer = optax.lion(2e-4)
+    opt_state = optimizer.init(params)
 
-batch_size = 128
-train_loader, test_loader = create_mnist_dataset(bsz=batch_size, patch_shape=patch_shape)
+    mask = create_attention_mask(seq_len // shrink_factor, original_n_unmasked // shrink_factor)
 
-count_params(params)
-print("Available devices:", devices())
+    batch_size = 128
+    train_loader, test_loader = create_mnist_dataset(bsz=batch_size, patch_shape=patch_shape)
 
-main(train_loader, test_loader, params, opt_state)
+    count_params(params)
+    print("Available devices:", devices())
+
+    train(train_loader, test_loader, params, opt_state)
 
