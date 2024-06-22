@@ -1,5 +1,3 @@
 sudo apt update
 sudo apt install pipx
-pip3 install --upgrade pip
-pip3 install --upgrade flatbuffers optax jaxtyping nvitop
-pip3 install --upgrade "jax[cuda12]"
+pip3 install -U pip flatbuffers optax jaxtyping nvitop "jax[cuda12]"
