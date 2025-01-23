@@ -40,7 +40,7 @@ def init_params(initializer: Callable,
     l1_proj    = initializer(keys[7], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms * d_model, d_model))
     l2_proj    = initializer(keys[8], (l3_blocks, l2_tfms, l2_blocks, l1_tfms * d_model, d_model))
     l3_proj    = initializer(keys[9], (l3_blocks, l2_tfms * d_model, d_model))
-    final_proj = initializer(keys[9], (d_model, n_classes))
+    final_proj = initializer(keys[10], (d_model, n_classes))
     return embeddings, wq, e, wk, f, wv, l0_proj, l1_proj, l2_proj, l3_proj, final_proj
 
 
