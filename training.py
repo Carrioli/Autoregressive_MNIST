@@ -58,7 +58,7 @@ def inverse_transform(matrix, original_shape, patch_shape):
 def count_params(params):
     params_flat, _ = tree_flatten(params)
     num_params = sum([p.size for p in params_flat])
-    print(f"Number of parameters: {num_params:_}")
+    print(f'Number of parameters: {num_params:_}')
 
 
 def loss_fn(params, x, y):
@@ -87,9 +87,9 @@ def batch_inference(batch, params):
 def inference_and_save(test_loader, params, epoch):
     batch = jnp.array(next(iter(test_loader))[0])
     predicted_batch, average_softmax_cross_entropy = batch_inference(batch, params)
-    print("Average inference loss:", average_softmax_cross_entropy)
-    print("Average inference L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
-    print("Perplexity:", jnp.exp(average_softmax_cross_entropy))
+    print('Average inference loss:', average_softmax_cross_entropy)
+    print('Average inference L2 loss:', jnp.mean((batch - predicted_batch) ** 2))
+    print('Perplexity:', jnp.exp(average_softmax_cross_entropy))
     predicted_batch = jax.vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
     batch           = jax.vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     save_batch(batch, predicted_batch, epoch)
@@ -128,8 +128,8 @@ def train(train_loader, params, opt_state):
     opt_state = jax.tree.map(lambda x: x[0], opt_state)
 
     avg_train_loss = train_loss / num_iter
-    print(f"Average train loss: {avg_train_loss}")
-    print(f"Perplexity: {jnp.exp(avg_train_loss)}")
+    print(f'Average train loss: {avg_train_loss}')
+    print(f'Perplexity: {jnp.exp(avg_train_loss)}')
     return params, opt_state
 
 
@@ -143,12 +143,12 @@ def test(test_loader, params):
         test_loss += test_step(params, input_batch)[0]
 
     avg_test_loss = test_loss / num_iter
-    print(f"Average test loss: {avg_test_loss}")
-    print(f"Perplexity: {jnp.exp(avg_test_loss)}")
+    print(f'Average test loss: {avg_test_loss}')
+    print(f'Perplexity: {jnp.exp(avg_test_loss)}')
 
 
 def save_params(params, path):
-    with open(path, "wb") as f:
+    with open(path, 'wb') as f:
         pickle.dump(params, f)
 
 
@@ -160,13 +160,13 @@ def train_and_test(train_loader, test_loader, params, opt_state):
         
         test(test_loader, params)
         
-        # save_params(params, f"params.pkl")
+        # save_params(params, f'params.pkl')
         
         if (epoch) % 10 == 0:
             inference_and_save(test_loader, params, epoch)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     l3_blocks = 1
     l2_tfms   = 2
     l2_blocks = 1
@@ -186,24 +186,24 @@ if __name__ == "__main__":
     n_devices = jax.device_count()
     devices = jax.devices()
     
-    print("Number of devices:", n_devices)
-    print("Available devices:", devices)
+    print('Number of devices:', n_devices)
+    print('Available devices:', devices)
     
     original_n_unmasked = 320
 
-    assert seq_len % shrink_factor == 0, "Sequence length must be divisible by the shrink factor"
-    assert original_n_unmasked % shrink_factor == 0, "Unmasked elements (should) be divisible by the shrink factor"
+    assert seq_len % shrink_factor == 0, 'Sequence length must be divisible by the shrink factor'
+    assert original_n_unmasked % shrink_factor == 0, 'Unmasked elements (should) be divisible by the shrink factor'
 
     params_key = jax.random.PRNGKey(42)
     initializer = jax.nn.initializers.lecun_normal()
 
     # params
     try:
-        with open("params.pkl", "rb") as f:
-            print("Loading params from params.pkl")
+        with open('params.pkl', 'rb') as f:
+            print('Loading params from params.pkl')
             params = pickle.load(f)
     except FileNotFoundError:
-        print("No params.pkl file found, initializing new parameters")
+        print('No params.pkl file found, initializing new parameters')
         params = init_params(initializer, 
                             l3_blocks,
                             l2_tfms,
