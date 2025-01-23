@@ -120,7 +120,7 @@ def train(train_loader, params, opt_state):
     train_loss = 0.0
     num_iter = len(train_loader)
     for batch in tqdm(train_loader, total=num_iter):
-        input_batch = jnp.array(batch[0]).reshape(num_devices, batch_size, -1)
+        input_batch = jnp.array(batch[0]).reshape(n_devices, batch_size, -1)
         loss, params, opt_state = train_step(params, opt_state, input_batch)
         train_loss += loss[0]
         
@@ -139,7 +139,7 @@ def test(test_loader, params):
     test_loss = 0.0
     num_iter = len(test_loader)
     for batch in tqdm(test_loader, total=num_iter):
-        input_batch = jnp.array(batch[0]).reshape(num_devices, batch_size, -1)
+        input_batch = jnp.array(batch[0]).reshape(n_devices, batch_size, -1)
         test_loss += test_step(params, input_batch)[0]
 
     avg_test_loss = test_loss / num_iter
@@ -183,10 +183,10 @@ if __name__ == "__main__":
     d_qk = 16
     d_v  = 16
 
-    num_devices = jax.device_count()
+    n_devices = jax.device_count()
     devices = jax.devices()
     
-    print("Number of devices:", num_devices)
+    print("Number of devices:", n_devices)
     print("Available devices:", devices)
     
     original_n_unmasked = 320
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     mask = create_attention_mask(seq_len // shrink_factor, original_n_unmasked // shrink_factor)
 
     batch_size = 128
-    train_loader, test_loader = create_mnist_dataset(bsz=num_devices*batch_size, patch_shape=patch_shape)
+    train_loader, test_loader = create_mnist_dataset(bsz=n_devices*batch_size, patch_shape=patch_shape)
 
     count_params(params)
 
