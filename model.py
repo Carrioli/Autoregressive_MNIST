@@ -1,8 +1,10 @@
+from functools import partial
 from typing import Callable
 
 import jax.numpy as jnp
 from jax import jit, lax, nn, profiler, random, vmap
 from jax.random import PRNGKey
+from jax.tree_util import tree_map
 from jaxtyping import Array
 
 
@@ -40,13 +42,18 @@ def init_params(initializer: Callable,
     l1_proj    = initializer(keys[7], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms * d_model, d_model))
     l2_proj    = initializer(keys[8], (l3_blocks, l2_tfms, l2_blocks, l1_tfms * d_model, d_model))
     l3_proj    = initializer(keys[9], (l3_blocks, l2_tfms * d_model, d_model))
-    final_proj = initializer(keys[10], (d_model, n_classes))
-    return embeddings, wq, e, wk, f, wv, l0_proj, l1_proj, l2_proj, l3_proj, final_proj
+    return embeddings, wq, e, wk, f, wv, l0_proj, l1_proj, l2_proj, l3_proj
 
 
 def concat_heads(x: Array) -> Array:
     x = jnp.transpose(x, (1, 0, 2))
     return x.reshape(x.shape[0], -1)
+
+
+def get_block_params(params, i):
+    # params is a tuple or dict of arrays shaped [l0_blocks, ...].
+    # This maps over each array, returning array[i].
+    return tree_map(lambda p: p[i], params)
 
 
 # @profile
@@ -89,8 +96,8 @@ def single_head_self_attention(x: Array,
 def level_0_block(x: Array,
                   params: Array,
                   mask: Array) -> Array:
-    *params, l0_proj = params
-    attention = vmap(single_head_self_attention, in_axes=(None, 0, None))(x, params, mask)
+    *l0_params, l0_proj = params
+    attention = vmap(lambda params: single_head_self_attention(x, params, mask))(l0_params)
     attention = concat_heads(attention)
     attention = jnp.dot(attention, l0_proj)
     attention = nn.standardize(attention)
@@ -102,11 +109,10 @@ def level_0_transformer(x: Array,
                         params: Array,
                         l0_blocks: int,
                         mask: Array) -> Array:
-    wq, e, wk, f, wv, l0_proj = params
     return lax.fori_loop(0,
                          l0_blocks,
                          lambda i, x: level_0_block(x,
-                                                    (wq[i], e[i], wk[i], f[i], wv[i], l0_proj[i]),
+                                                    get_block_params(params, i),
                                                     mask),
                          x)
 
@@ -115,8 +121,8 @@ def level_1_block(x: Array,
                   params: Array,
                   l0_blocks: int,
                   mask: Array) -> Array:
-    *params, l1_proj = params
-    attention = vmap(level_0_transformer, in_axes=(None, 0, None, None))(x, params, l0_blocks, mask)
+    *l1_params, l1_proj = params
+    attention = vmap(lambda params: level_0_transformer(x, params, l0_blocks, mask))(l1_params)
     attention = concat_heads(attention)
     attention = jnp.dot(attention, l1_proj)
     attention = nn.standardize(attention)
@@ -129,23 +135,22 @@ def level_1_transformer(x: Array,
                         l1_blocks: int,
                         l0_blocks: int,
                         mask: Array) -> Array:
-    wq, e, wk, f, wv, l0_proj, l1_proj = params
     return lax.fori_loop(0,
                          l1_blocks,
                          lambda i, x: level_1_block(x,
-                                                    (wq[i], e[i], wk[i], f[i], wv[i], l0_proj[i], l1_proj[i]),
+                                                    get_block_params(params, i),
                                                     l0_blocks,
                                                     mask),
                          x)
 
 
 def level_2_block(x: Array,
-                params: Array,
-                l1_blocks: int,
-                l0_blocks: int,
-                mask: Array) -> Array:
-    *params, l2_proj = params
-    attention = vmap(level_1_transformer, in_axes=(None, 0, None, None, None))(x, params, l1_blocks, l0_blocks, mask)
+                  params: Array,
+                  l1_blocks: int,
+                  l0_blocks: int,
+                  mask: Array) -> Array:
+    *l2_params, l2_proj = params
+    attention = vmap(lambda params: level_1_transformer(x, params, l1_blocks, l0_blocks, mask))(l2_params)
     attention = concat_heads(attention)
     attention = jnp.dot(attention, l2_proj)
     attention = nn.standardize(attention)
@@ -154,31 +159,29 @@ def level_2_block(x: Array,
 
 
 def level_2_transformer(x: Array,
-                      params: Array,
-                      l2_blocks: int,
-                      l1_blocks: int,
-                      l0_blocks: int,
-                      mask: Array) -> Array:
-    wq, e, wk, f, wv, l0_proj, l1_proj, l2_proj = params
+                        params: Array,
+                        l2_blocks: int,
+                        l1_blocks: int,
+                        l0_blocks: int,
+                        mask: Array) -> Array:
     return lax.fori_loop(0,
                          l2_blocks,
                          lambda i, x: level_2_block(x,
-                                                    (wq[i], e[i], wk[i], f[i], wv[i], l0_proj[i], l1_proj[i], l2_proj[i]),
+                                                    get_block_params(params, i),
                                                     l1_blocks,
                                                     l0_blocks,
                                                     mask),
                          x)
 
 
-
 def level_3_block(x: Array,
-                params: Array,
-                l2_blocks: int,
-                l1_blocks: int,
-                l0_blocks: int,
-                mask: Array) -> Array:
-    *params, l3_proj = params
-    attention = vmap(level_2_transformer, in_axes=(None, 0, None, None, None, None))(x, params, l2_blocks, l1_blocks, l0_blocks, mask)
+                  params: Array,
+                  l2_blocks: int,
+                  l1_blocks: int,
+                  l0_blocks: int,
+                  mask: Array) -> Array:
+    *l3_params, l3_proj = params
+    attention = vmap(lambda params: level_2_transformer(x, params, l2_blocks, l1_blocks, l0_blocks, mask))(l3_params)
     attention = concat_heads(attention)
     attention = jnp.dot(attention, l3_proj)
     attention = nn.standardize(attention)
@@ -187,29 +190,30 @@ def level_3_block(x: Array,
 
 
 def level_3_transformer(x: Array,
-                      params: Array,
-                      l3_blocks: int,
-                      l2_blocks: int,
-                      l1_blocks: int,
-                      l0_blocks: int,
-                      mask: Array) -> Array:
-    embeddings, wq, e, wk, f, wv, l0_proj, l1_proj, l2_proj, l3_proj, final_proj = params
+                        params: Array,
+                        l3_blocks: int,
+                        l2_blocks: int,
+                        l1_blocks: int,
+                        l0_blocks: int,
+                        mask: Array) -> Array:
+    embeddings, *params = params
     x = jnp.take(embeddings, x, axis=0)
     out = lax.fori_loop(0,
                         l3_blocks,
                         lambda i, x: level_3_block(x,
-                                                (wq[i], e[i], wk[i], f[i], wv[i], l0_proj[i], l1_proj[i], l2_proj[i], l3_proj[i]),
+                                                get_block_params(params, i),
                                                 l2_blocks,
                                                 l1_blocks,
                                                 l0_blocks,
                                                 mask),
                         x)
-    return jnp.dot(out, final_proj) # normalization and activation here?
+    return jnp.dot(out, embeddings.T)
 
 
 
 
 # adding batch dimension
+@partial(jit, static_argnums=(2, 3, 4, 5))
 def batched_forward(x: Array,
                     params: Array,
                     l3_blocks: int,
@@ -217,6 +221,5 @@ def batched_forward(x: Array,
                     l1_blocks: int,
                     l0_blocks: int,
                     mask: Array) -> Array:
-    return vmap(level_3_transformer, in_axes=(0, None, None, None, None, None, None))(x, params, l3_blocks, l2_blocks, l1_blocks, l0_blocks, mask)
-
+    return vmap(lambda x_batch: level_3_transformer(x_batch, params, l3_blocks, l2_blocks, l1_blocks, l0_blocks, mask))(x)
 

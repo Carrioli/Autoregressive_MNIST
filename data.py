@@ -42,11 +42,13 @@ def create_mnist_dataset(bsz, patch_shape):
         train,
         batch_size=bsz,
         shuffle=True,
+        drop_last=True,
     )
     testloader = torch.utils.data.DataLoader(
         test,
         batch_size=bsz,
         shuffle=False,
+        drop_last=True,
     )
 
     return trainloader, testloader

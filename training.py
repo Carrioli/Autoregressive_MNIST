@@ -1,15 +1,16 @@
 import os
 import pickle
+from functools import partial
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
-from jax import config, devices, jit, nn, random, value_and_grad, vmap, scipy, device_put
-from jax.tree_util import tree_flatten
-from tqdm import tqdm
+import jax
 from jax.experimental import mesh_utils
 from jax.sharding import PositionalSharding
+from jax.tree_util import tree_flatten
+from tqdm import tqdm
 
 from data import create_mnist_dataset
 from model import batched_forward, create_attention_mask, init_params
@@ -65,22 +66,6 @@ def loss_fn(params, x, y):
     return jnp.mean(optax.softmax_cross_entropy_with_integer_labels(pred_y, y))
 
 
-@jit
-def train_step(params, opt_state, batch):
-    x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-    loss, grads = value_and_grad(loss_fn)(params, x, y)
-    updates, opt_state = optimizer.update(grads, opt_state, params = params)
-    params = optax.apply_updates(params, updates)    
-    return loss, params, opt_state
-
-
-@jit
-def test_step(params, batch):
-    x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
-    loss, _ = value_and_grad(loss_fn)(params, x, y)
-    return loss
-
-
 # @jit
 # TODO rewrite this so that I can jit compile it and not throw nan
 def batch_inference(batch, params):
@@ -104,27 +89,60 @@ def inference_and_save(test_loader, params, epoch):
     predicted_batch, average_softmax_cross_entropy = batch_inference(batch, params)
     print("Average inference loss:", average_softmax_cross_entropy)
     print("Average inference L2 loss:", jnp.mean((batch - predicted_batch) ** 2))
-    predicted_batch = vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
-    batch           = vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
+    print("Perplexity:", jnp.exp(average_softmax_cross_entropy))
+    predicted_batch = jax.vmap(inverse_transform, in_axes=(0, None, None))(predicted_batch, (28, 28), patch_shape)
+    batch           = jax.vmap(inverse_transform, in_axes=(0, None, None))(batch, (28, 28), patch_shape)
     save_batch(batch, predicted_batch, epoch)
 
 
-def train(train_loader, params, opt_state):
-    train_loss = 0 
-    for batch in tqdm(train_loader):
-        loss, params, opt_state = train_step(params, opt_state, jnp.array(batch[0]))
-        train_loss += loss
-    avg_train_loss = train_loss / len(train_loader)
+@partial(jax.pmap, axis_name='batch')
+def train_step(params, opt_state, batch):
+    x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+    loss, grads = jax.value_and_grad(loss_fn)(params, x, y)
+    grads = jax.lax.pmean(grads, axis_name='batch')
+    updates, opt_state = optimizer.update(grads, opt_state, params = params)
+    params = optax.apply_updates(params, updates)
+    loss = jax.lax.pmean(loss, axis_name='batch')
+    return loss, params, opt_state
+
+
+@partial(jax.pmap, axis_name='batch')
+def test_step(params, batch):
+    x, y = batch[:, :-shrink_factor], batch[:, shrink_factor:]
+    loss, _ = jax.value_and_grad(loss_fn)(params, x, y)
+    return loss
+
+
+def train(train_loader, params, opt_state):   
+    params = jax.device_put_replicated(params, devices)
+    opt_state = jax.device_put_replicated(opt_state, devices)
+    
+    train_loss = 0.0
+    num_iter = len(train_loader)
+    for batch in tqdm(train_loader, total=num_iter):
+        input_batch = jnp.array(batch[0]).reshape(num_devices, batch_size, -1)
+        loss, params, opt_state = train_step(params, opt_state, input_batch)
+        train_loss += loss[0]
+        
+    params = jax.tree.map(lambda x: x[0], params)
+    opt_state = jax.tree.map(lambda x: x[0], opt_state)
+
+    avg_train_loss = train_loss / num_iter
     print(f"Average train loss: {avg_train_loss}")
     print(f"Perplexity: {jnp.exp(avg_train_loss)}")
     return params, opt_state
 
 
-def test(test_loader, params):
-    test_loss = 0
-    for batch in test_loader:
-        test_loss += test_step(params, jnp.array(batch[0]))
-    avg_test_loss = test_loss / len(test_loader)
+def test(test_loader, params):    
+    params = jax.device_put_replicated(params, devices)
+    
+    test_loss = 0.0
+    num_iter = len(test_loader)
+    for batch in tqdm(test_loader, total=num_iter):
+        input_batch = jnp.array(batch[0]).reshape(num_devices, batch_size, -1)
+        test_loss += test_step(params, input_batch)[0]
+
+    avg_test_loss = test_loss / num_iter
     print(f"Average test loss: {avg_test_loss}")
     print(f"Perplexity: {jnp.exp(avg_test_loss)}")
 
@@ -156,7 +174,7 @@ if __name__ == "__main__":
     l1_blocks = 1
     l0_tfms   = 8
     l0_blocks = 1
-    n_heads   = 32
+    n_heads   = 16
     n_classes = 256 # same as d_out
     d_model   = 96 # same as feature size
     patch_shape = (4, 4)
@@ -165,13 +183,19 @@ if __name__ == "__main__":
     d_qk = 16
     d_v  = 16
 
+    num_devices = jax.device_count()
+    devices = jax.devices()
+    
+    print("Number of devices:", num_devices)
+    print("Available devices:", devices)
+    
     original_n_unmasked = 320
 
     assert seq_len % shrink_factor == 0, "Sequence length must be divisible by the shrink factor"
     assert original_n_unmasked % shrink_factor == 0, "Unmasked elements (should) be divisible by the shrink factor"
 
-    params_key = random.PRNGKey(42)
-    initializer = nn.initializers.lecun_normal()
+    params_key = jax.random.PRNGKey(42)
+    initializer = jax.nn.initializers.lecun_normal()
 
     # params
     try:
@@ -203,10 +227,9 @@ if __name__ == "__main__":
     mask = create_attention_mask(seq_len // shrink_factor, original_n_unmasked // shrink_factor)
 
     batch_size = 128
-    train_loader, test_loader = create_mnist_dataset(bsz=batch_size, patch_shape=patch_shape)
+    train_loader, test_loader = create_mnist_dataset(bsz=num_devices*batch_size, patch_shape=patch_shape)
 
     count_params(params)
-    print("Available devices:", devices())
 
     train_and_test(train_loader, test_loader, params, opt_state)
 
