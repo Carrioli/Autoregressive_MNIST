@@ -5,3 +5,4 @@ saved_images
 __pycache__
 params.pkl
 .DS_Store
+mnist_venv
