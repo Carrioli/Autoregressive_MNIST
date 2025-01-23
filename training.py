@@ -3,12 +3,12 @@ import pickle
 from functools import partial
 
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import jax
 from jax.tree_util import tree_flatten
 from tqdm import tqdm
+from PIL import Image
 
 from data import create_mnist_dataset
 from model import batched_forward, create_attention_mask, init_params
@@ -39,10 +39,11 @@ def save_batch(batch, predicted_batch, epoch_index, save_dir='saved_images'):
     os.makedirs(save_dir, exist_ok=True)
     colorized_batch = colorize_batch(predicted_batch, original_n_unmasked)
     batch = jnp.stack([batch, batch, batch], axis=-1)
-    combined_batch = jnp.concatenate([batch, colorized_batch], axis=-2) / 255
+    combined_batch = jnp.concatenate([batch, colorized_batch], axis=-2)
 
     for i, img in enumerate(combined_batch):
-        plt.imsave(f'{save_dir}/epoch_{epoch_index}_item_{i}.png', img)
+        im = Image.fromarray(np.array(img).astype("uint8"))
+        im.save(f"{save_dir}/epoch_{epoch_index}_item_{i}.png")
 
 
 def inverse_transform(matrix, original_shape, patch_shape):
@@ -133,14 +134,13 @@ def train(train_loader, params, opt_state):
 
 def test(test_loader, params):    
     params = jax.device_put_replicated(params, devices)
-    
+
     test_loss = 0.0
-    num_iter = len(test_loader)
-    for batch in tqdm(test_loader, total=num_iter):
+    for batch in test_loader:
         input_batch = jnp.array(batch[0]).reshape(n_devices, batch_size, -1)
         test_loss += test_step(params, input_batch)[0]
 
-    avg_test_loss = test_loss / num_iter
+    avg_test_loss = test_loss / len(test_loader)
     print(f'Average test loss: {avg_test_loss}')
     print(f'Perplexity: {jnp.exp(avg_test_loss)}')
 
@@ -160,8 +160,8 @@ def train_and_test(train_loader, test_loader, params, opt_state):
         
         # save_params(params, f'params.pkl')
         
-        if (epoch) % 10 == 0:
-            inference_and_save(test_loader, params, epoch)
+        # if (epoch) % 10 == 0:
+        inference_and_save(test_loader, params, epoch)
 
 
 if __name__ == '__main__':
