@@ -112,32 +112,26 @@ def inference_and_save(test_loader, params, epoch):
 def train(train_loader, params, opt_state):
     train_loss = 0 
     for batch in tqdm(train_loader):
-        loss, params, opt_state = train_step(params, opt_state, shard_data(jnp.array(batch[0])))
+        loss, params, opt_state = train_step(params, opt_state, jnp.array(batch[0]))
         train_loss += loss
-    print(f"Average train loss: {train_loss / len(train_loader)}")
+    avg_train_loss = train_loss / len(train_loader)
+    print(f"Average train loss: {avg_train_loss}")
+    print(f"Perplexity: {jnp.exp(avg_train_loss)}")
     return params, opt_state
 
 
 def test(test_loader, params):
     test_loss = 0
     for batch in test_loader:
-        test_loss += test_step(params, shard_data(jnp.array(batch[0])))
-    print(f"Average test loss: {test_loss / len(test_loader)}")
+        test_loss += test_step(params, jnp.array(batch[0]))
+    avg_test_loss = test_loss / len(test_loader)
+    print(f"Average test loss: {avg_test_loss}")
+    print(f"Perplexity: {jnp.exp(avg_test_loss)}")
 
 
 def save_params(params, path):
     with open(path, "wb") as f:
         pickle.dump(params, f)
-
-
-def shard_data(data):
-    sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
-    return device_put(data, sharding.reshape(2, 4))
-
-
-def is_congruent(x_shape, sharding_shape) -> bool:
-  return (len(x_shape) == len(sharding_shape) and
-          all(d1 % d2 == 0 for d1, d2 in zip(x_shape, sharding_shape)))
 
 
 def train_and_test(train_loader, test_loader, params, opt_state):
