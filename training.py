@@ -7,8 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import jax
-from jax.experimental import mesh_utils
-from jax.sharding import PositionalSharding
 from jax.tree_util import tree_flatten
 from tqdm import tqdm
 
