@@ -1,46 +1,59 @@
+from functools import partial
 from typing import Callable
 
 import jax.numpy as jnp
-from jax import jit, lax, nn, random, vmap, profiler
+from jax import jit, lax, nn, profiler, random, vmap
 from jax.random import PRNGKey
+from jax.tree_util import tree_map
 from jaxtyping import Array
 
 
 def create_attention_mask(size: int, n_unmasked: int) -> Array:
-    assert n_unmasked <= size, "Unmasked elements must be less than or equal to the sequence length"
+    assert n_unmasked <= size, 'Unmasked elements must be less than or equal to the sequence length'
     mask = jnp.triu(jnp.full((size, size), fill_value=-jnp.inf), k=1)
     # return mask
     return mask.at[:, :n_unmasked].set(0)
 
 
 def init_params(initializer: Callable,
-                n_outer_blocks: int,
-                n_transformers: int,
-                n_blocks: int,
+                l3_blocks: int,
+                l2_tfms: int,
+                l2_blocks: int,
+                l1_tfms: int,
+                l1_blocks: int,
+                l0_tfms: int,
+                l0_blocks: int,
                 n_heads: int,
-                num_classes: int,
+                n_classes: int,
                 d_model: int,
                 seq_len: int,
                 d_qk: int,
                 d_v: int,
                 shrink_factor: int,
                 key: PRNGKey) -> Array:
-    params_keys = random.split(key, 10)
-    embeddings  = initializer(params_keys[0], (num_classes, d_model))
-    wq          = initializer(params_keys[1], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_qk))
-    e           = initializer(params_keys[2], (n_outer_blocks, n_transformers, n_blocks, n_heads, seq_len // shrink_factor, 1, shrink_factor))
-    wk          = initializer(params_keys[3], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_qk))
-    f           = initializer(params_keys[4], (n_outer_blocks, n_transformers, n_blocks, n_heads, seq_len // shrink_factor, shrink_factor, 1))
-    wv          = initializer(params_keys[5], (n_outer_blocks, n_transformers, n_blocks, n_heads, d_model, d_v))
-    projection  = initializer(params_keys[6], (n_outer_blocks, n_transformers, n_blocks, n_heads * d_v, d_model))
-    out_proj    = initializer(params_keys[7], (n_outer_blocks, n_transformers * d_model, d_model))
-    final_proj  = initializer(params_keys[8], (d_model, num_classes))
-    return embeddings, wq, e, wk, f, wv, projection, out_proj, final_proj
+    keys  = random.split(key, 20)
+    embeddings = initializer(keys[0], (n_classes, d_model))
+    wq         = initializer(keys[1], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms, l0_blocks, n_heads, d_model, d_qk))
+    e          = initializer(keys[2], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms, l0_blocks, n_heads, seq_len // shrink_factor, 1, shrink_factor))
+    wk         = initializer(keys[3], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms, l0_blocks, n_heads, d_model, d_qk))
+    f          = initializer(keys[4], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms, l0_blocks, n_heads, seq_len // shrink_factor, shrink_factor, 1))
+    wv         = initializer(keys[5], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms, l0_blocks, n_heads, d_model, d_v))
+    l0_proj    = initializer(keys[6], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms, l0_blocks, n_heads * d_v, d_model))
+    l1_proj    = initializer(keys[7], (l3_blocks, l2_tfms, l2_blocks, l1_tfms, l1_blocks, l0_tfms * d_model, d_model))
+    l2_proj    = initializer(keys[8], (l3_blocks, l2_tfms, l2_blocks, l1_tfms * d_model, d_model))
+    l3_proj    = initializer(keys[9], (l3_blocks, l2_tfms * d_model, d_model))
+    return embeddings, wq, e, wk, f, wv, l0_proj, l1_proj, l2_proj, l3_proj
 
 
 def concat_heads(x: Array) -> Array:
     x = jnp.transpose(x, (1, 0, 2))
     return x.reshape(x.shape[0], -1)
+
+
+def get_block_params(params, i):
+    # params is a tuple or dict of arrays shaped [l0_blocks, ...].
+    # This maps over each array, returning array[i].
+    return tree_map(lambda p: p[i], params)
 
 
 # @profile
@@ -80,71 +93,133 @@ def single_head_self_attention(x: Array,
     return out
 
 
-def transformer_block(x: Array,
-                      params: Array,
-                      mask: Array) -> Array:
-    *params, projection = params
-    attention = vmap(single_head_self_attention, in_axes=(None, 0, None))(x, params, mask)
+def level_0_block(x: Array,
+                  params: Array,
+                  mask: Array) -> Array:
+    *l0_params, l0_proj = params
+    attention = vmap(lambda params: single_head_self_attention(x, params, mask))(l0_params)
     attention = concat_heads(attention)
-    attention = jnp.dot(attention, projection)
-    attention += x
-    mean = jnp.mean(attention, axis=-1, keepdims=True)
-    var = jnp.var(attention, axis=-1, keepdims=True)
-    attention = (attention - mean) / jnp.sqrt(var + 1e-5)
-    return attention
+    attention = jnp.dot(attention, l0_proj)
+    attention = nn.standardize(attention)
+    attention = nn.relu(attention)
+    return attention + x
 
 
-def transformer(x: Array,
-                params: Array,
-                n_blocks: int,
-                mask: Array) -> Array:
-    wq, e, wk, f, wv, projection = params
+def level_0_transformer(x: Array,
+                        params: Array,
+                        l0_blocks: int,
+                        mask: Array) -> Array:
     return lax.fori_loop(0,
-                         n_blocks,
-                         lambda i, x: transformer_block(x,
-                                                        (wq[i], e[i], wk[i], f[i], wv[i], projection[i]),
-                                                        mask),
+                         l0_blocks,
+                         lambda i, x: level_0_block(x,
+                                                    get_block_params(params, i),
+                                                    mask),
                          x)
 
 
-def super_block(x: Array,
-                params: Array,
-                n_blocks: int,
-                mask: Array) -> Array:
-    *params, out_proj = params
-    super_attention = vmap(transformer, in_axes=(None, 0, None, None))(x, params, n_blocks, mask)
-    super_attention = concat_heads(super_attention)
-    super_attention = jnp.dot(super_attention, out_proj)
-    x += super_attention
-    mean = jnp.mean(x, axis=1, keepdims=True)
-    var = jnp.var(x, axis=1, keepdims=True)
-    x = (x - mean) / jnp.sqrt(var + 1e-5)
-    return x
+def level_1_block(x: Array,
+                  params: Array,
+                  l0_blocks: int,
+                  mask: Array) -> Array:
+    *l1_params, l1_proj = params
+    attention = vmap(lambda params: level_0_transformer(x, params, l0_blocks, mask))(l1_params)
+    attention = concat_heads(attention)
+    attention = jnp.dot(attention, l1_proj)
+    attention = nn.standardize(attention)
+    attention = nn.relu(attention)
+    return attention + x
 
 
-def super_transformer(x: Array,
-                      params: Array,
-                      n_outer_blocks: int,
-                      n_blocks: int,
-                      mask: Array) -> Array:
-    embeddings, wq, e, wk, f, wv, projection, out_proj, final_proj = params
+def level_1_transformer(x: Array,
+                        params: Array,
+                        l1_blocks: int,
+                        l0_blocks: int,
+                        mask: Array) -> Array:
+    return lax.fori_loop(0,
+                         l1_blocks,
+                         lambda i, x: level_1_block(x,
+                                                    get_block_params(params, i),
+                                                    l0_blocks,
+                                                    mask),
+                         x)
+
+
+def level_2_block(x: Array,
+                  params: Array,
+                  l1_blocks: int,
+                  l0_blocks: int,
+                  mask: Array) -> Array:
+    *l2_params, l2_proj = params
+    attention = vmap(lambda params: level_1_transformer(x, params, l1_blocks, l0_blocks, mask))(l2_params)
+    attention = concat_heads(attention)
+    attention = jnp.dot(attention, l2_proj)
+    attention = nn.standardize(attention)
+    attention = nn.relu(attention)
+    return attention + x
+
+
+def level_2_transformer(x: Array,
+                        params: Array,
+                        l2_blocks: int,
+                        l1_blocks: int,
+                        l0_blocks: int,
+                        mask: Array) -> Array:
+    return lax.fori_loop(0,
+                         l2_blocks,
+                         lambda i, x: level_2_block(x,
+                                                    get_block_params(params, i),
+                                                    l1_blocks,
+                                                    l0_blocks,
+                                                    mask),
+                         x)
+
+
+def level_3_block(x: Array,
+                  params: Array,
+                  l2_blocks: int,
+                  l1_blocks: int,
+                  l0_blocks: int,
+                  mask: Array) -> Array:
+    *l3_params, l3_proj = params
+    attention = vmap(lambda params: level_2_transformer(x, params, l2_blocks, l1_blocks, l0_blocks, mask))(l3_params)
+    attention = concat_heads(attention)
+    attention = jnp.dot(attention, l3_proj)
+    attention = nn.standardize(attention)
+    attention = nn.relu(attention)
+    return attention + x
+
+
+def level_3_transformer(x: Array,
+                        params: Array,
+                        l3_blocks: int,
+                        l2_blocks: int,
+                        l1_blocks: int,
+                        l0_blocks: int,
+                        mask: Array) -> Array:
+    embeddings, *params = params
     x = jnp.take(embeddings, x, axis=0)
     out = lax.fori_loop(0,
-                        n_outer_blocks,
-                        lambda i, x: super_block(x,
-                                                (wq[i], e[i], wk[i], f[i], wv[i], projection[i], out_proj[i]),
-                                                n_blocks,
+                        l3_blocks,
+                        lambda i, x: level_3_block(x,
+                                                get_block_params(params, i),
+                                                l2_blocks,
+                                                l1_blocks,
+                                                l0_blocks,
                                                 mask),
                         x)
-    return jnp.dot(out, final_proj)
+    return jnp.dot(out, embeddings.T)
+
+
 
 
 # adding batch dimension
+@partial(jit, static_argnums=(2, 3, 4, 5))
 def batched_forward(x: Array,
                     params: Array,
-                    n_outer_blocks: int,
-                    n_blocks: int,
+                    l3_blocks: int,
+                    l2_blocks: int,
+                    l1_blocks: int,
+                    l0_blocks: int,
                     mask: Array) -> Array:
-    return vmap(super_transformer, in_axes=(0, None, None, None, None))(x, params, n_outer_blocks, n_blocks, mask)
-
+    return vmap(lambda x_batch: level_3_transformer(x_batch, params, l3_blocks, l2_blocks, l1_blocks, l0_blocks, mask))(x)
 
