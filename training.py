@@ -65,40 +65,21 @@ def loss_fn(params, x, y):
     return jnp.mean(optax.softmax_cross_entropy_with_integer_labels(pred_y, y))
 
 
-@jax.jit
+# TODO rewrite this so that I can jit compile it and not throw nan
 def batch_inference(batch, params):
     prediction = batch[:, :original_n_unmasked]
-    # Calculate number of iterations needed
-    remaining_length = seq_len + shrink_factor - original_n_unmasked
-    num_iterations = remaining_length // shrink_factor
-    
-    # Pre-allocate arrays for logits
-    logits = jnp.zeros((batch.shape[0], remaining_length, n_classes))
-    
-    def body_fun(i, carry):
-        current_prediction, current_logits = carry
-        # Forward pass for current state
-        out = batched_forward(current_prediction, params, l3_blocks, l2_blocks, l1_blocks, l0_blocks, mask=0)
-        # Extract the last shrink_factor outputs
-        current_out = out[:, -shrink_factor:, :]
-        # Update logits for this iteration
-        current_logits = current_logits.at[:, i*shrink_factor:(i+1)*shrink_factor, :].set(current_out)
-        # Get class predictions
-        class_predictions = jnp.argmax(current_out, axis=-1)
-        # Update prediction by concatenating new predictions
-        current_prediction = jnp.concatenate([current_prediction, class_predictions], axis=-1)
-        return current_prediction, current_logits
-    
-    # Run the loop
-    final_prediction, final_logits = jax.lax.fori_loop(
-        0, num_iterations, body_fun, (prediction, logits)
-    )
-    
-    # Calculate loss
+    logits = jnp.empty((batch_size, 0, n_classes)) 
+
+    while prediction.shape[-1] != (seq_len + shrink_factor):
+        out = batched_forward(prediction, params, l3_blocks, l2_blocks, l1_blocks, l0_blocks, mask=0)
+        out = out[:, -shrink_factor:, :]
+        logits = jnp.concatenate([logits, out], axis=1)
+        out = jnp.argmax(out, axis=-1)
+        prediction = jnp.concatenate([prediction, out], axis=-1)
+
     labels = batch[:, original_n_unmasked:]
-    average_softmax_cross_entropy = jnp.mean(optax.softmax_cross_entropy_with_integer_labels(final_logits, labels))
-    
-    return final_prediction, average_softmax_cross_entropy
+    average_softmax_cross_entropy = jnp.mean(optax.softmax_cross_entropy_with_integer_labels(logits, labels))
+    return prediction, average_softmax_cross_entropy
 
 
 def inference_and_save(test_loader, params, epoch):
@@ -172,7 +153,7 @@ def train_and_test(train_loader, test_loader, params, opt_state):
     for epoch in range(1, 30):
         print('Epoch: ' + str(epoch))
         
-        params, opt_state = train(train_loader, params, opt_state)
+        # params, opt_state = train(train_loader, params, opt_state)
         
         test(test_loader, params)
         
