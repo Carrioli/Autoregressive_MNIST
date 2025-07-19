@@ -39,7 +39,7 @@ python training.py
 
 ## Technical Details
 
-- **Parameters**: ~1M parameters across 4 hierarchical levels
+- **Parameters**: 6_438_912 parameters across 4 hierarchical levels
 - **Training**: 30 epochs with Lion optimizer  
 - **Input**: First 320 pixels (20 patches) as context
 - **Output**: Remaining 464 pixels generated autoregressively
