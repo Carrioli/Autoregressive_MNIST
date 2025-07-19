@@ -25,6 +25,7 @@ The model generates high-quality digit completions. In the images below:
 ![Example 2](saved_images/epoch_99_item_3.png)
 ![Example 3](saved_images/epoch_99_item_15.png)
 ![Example 4](saved_images/epoch_99_item_27.png)
+![Example 5](saved_images/epoch_99_item_63.png)
 
 ### The "3→2" Phenomenon
 Notice how some partial "3" digits get completed as "2" - this happens when the initial pixels are ambiguous between digits, showing the model's reliance on local context.
